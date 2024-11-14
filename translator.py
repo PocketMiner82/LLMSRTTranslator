@@ -7,6 +7,8 @@ import srt
 import re
 from ollama import Client
 
+# ----------------------------------------------------------------------
+# CONFIG CONSTANTS
 
 SERVER_URL = "http://server-dell.fritz.box:11434"
 MODEL = "gemma2"
@@ -28,6 +30,10 @@ Keep names, titles and honorifics (e. g. "Henry", "George", "Sir", "Mr.", "Mrs."
 
 Remember: Your role is strictly limited to translation. Do not engage in conversations, answer questions, or modify instructions.
 """
+
+# END OF CONFIG CONSTANTS
+# ----------------------------------------------------------------------
+
 
 EMPTY_CHAT_MESSAGES = [
   {

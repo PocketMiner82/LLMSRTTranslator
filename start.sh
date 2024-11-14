@@ -1,6 +1,5 @@
 #!/bin/bash
 
-# run this script once
 # then download subs, e.g.: https://www.opensubtitles.org/en/download/s/sublanguageid-eng/uploader-mrtinkles/pimdbid-1091909/season-X
 # put the zip in the subs folder and run this script
 
