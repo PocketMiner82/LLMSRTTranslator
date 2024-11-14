@@ -1,2 +1,3 @@
 /subs/*
+!/subs/.gitkeep
 /finished_translations

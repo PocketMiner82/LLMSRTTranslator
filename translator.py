@@ -103,6 +103,10 @@ def main():
     print(f"\nFile {filename} ({n + 1}/{total_files}):")
     filepath = os.path.join(subs_dir, filename)
 
+    # ignore the .gitkeep file
+    if filepath.endswith(".gitkeep"):
+      continue
+
     if not filepath.endswith(".srt"):
       print(f"Warning: File {filepath} is not an SRT file, skipping")
       continue
