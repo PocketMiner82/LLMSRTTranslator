@@ -82,7 +82,7 @@ def ends_with_punctuation(text: str) -> bool:
     """
     # ignore HTML tags
     text = remove_html_tags(text)
-    return text.endswith((".", "!", "?", "\"", "'"))
+    return text.endswith((".", "!", "?", "\"", "'", "♪"))
 
 def starts_with_hyphen(text: str) -> bool:
     """
