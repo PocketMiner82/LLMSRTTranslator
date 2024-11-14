@@ -1,8 +1,13 @@
 #!/bin/bash
 
-# download link: https://www.opensubtitles.org/en/download/s/sublanguageid-eng/uploader-mrtinkles/pimdbid-1091909/season-8
+# run this script once
+# then download subs, e.g.: https://www.opensubtitles.org/en/download/s/sublanguageid-eng/uploader-mrtinkles/pimdbid-1091909/season-X
+# put the zip in the subs folder and run this script
 
 cd "$(dirname "$0")" || exit 1
+
+mkdir -p subs 2>/dev/null
+mkdir -p finished_translations 2>/dev/null
 
 cd subs || exit 1
 unzip *.zip || exit 1
@@ -29,6 +34,6 @@ for file in *.srt; do
     fi
 done
 
-mv *.zip .. || exit 1
+mv *.zip ../finished_translations || exit 1
 
 python ../translator.py
