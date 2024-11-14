@@ -68,7 +68,7 @@ def remove_html_tags(text: str) -> str:
   Returns:
     str: The text without HTML tags.
   """
-  return re.sub(r'<[^>]*>', '', text)
+  return re.sub(r'<[^>]*>', '', text).strip()
 
 def ends_with_punctuation(text: str) -> bool:
     """
@@ -197,7 +197,7 @@ def main():
             line = line.strip()
 
             # condition for concatenating hyphenated lines
-            if (starts_with_hyphen(line) and prev_line.strip() and not ends_with_punctuation(prev_line.strip())):
+            if (starts_with_hyphen(line) and prev_line.strip() and not ends_with_punctuation(prev_line)):
               line = line[1:].strip()
               line_builder += " "
             elif (starts_with_hyphen(line)):
