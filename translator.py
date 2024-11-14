@@ -157,18 +157,17 @@ def main():
 
   # directory where subtitle files are stored
   subs_dir = os.path.join(os.path.dirname(__file__), 'subs')
-  files = os.listdir(subs_dir)
+  
+  # remove files ending in .gitkeep 
+  files = [f for f in os.listdir(subs_dir) if not f.endswith('.gitkeep')]
   total_files = len(files)
 
   # loop through all files in 'subs' directory
   for n, filename in enumerate(files):
-    # print progress of current file processing
-    print(f"\nFile {filename} ({n + 1}/{total_files}):")
     filepath = os.path.join(subs_dir, filename)
 
-    # ignore the .gitkeep file
-    if filepath.endswith(".gitkeep"):
-      continue
+    # print progress of current file processing
+    print(f"\nFile {filename} ({n + 1}/{total_files}):")
 
     # skip non-SRT files and warn user
     if not filepath.endswith(".srt"):
