@@ -122,7 +122,7 @@ def main():
             if (starts_with_hyphen(line) and prev_line.strip() and not ends_with_punctuation(prev_line.strip())):
               line = line[1:].strip()
               line_builder += " "
-            if (starts_with_hyphen(line)):
+            elif (starts_with_hyphen(line)):
               line_builder += "\n"
             else:
               line_builder += " "
