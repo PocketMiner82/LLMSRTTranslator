@@ -1,4 +1,3 @@
-ollama
-srt
-re
-requests
+ollama>=0.3
+srt>=3.5
+requests>=2.32
