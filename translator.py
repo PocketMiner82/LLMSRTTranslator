@@ -99,6 +99,8 @@ Formatiere deine Antwort NICHT. Verwende KEIN MARKDOWN (keine '`' Zeichen) sonde
   ]
 }}
 
+Denk daran, Zeilenumbrüche IMMER im JSON mit "\\n" zu escapen.
+
 Wenn keine Änderungen vorgenommen wurden, gib bitte trotzdem eine Antwort im obigen Format, wobei "status" auf false gesetzt werden muss und "updatedTranslations" leer bleibt.
 """
 
@@ -356,12 +358,20 @@ def reevaluateTranslatedSRTFile(subs: list[srt.Subtitle]) -> list[srt.Subtitle]:
         }
       ]
 
-      # request reevaluation from the server
-      resp = ollama_client.chat(model=MODEL_REEVALUATE, messages=chat_messages_reevaluate, options=ollama.Options(temperature=TEMPERATURE_REEVALUATE, num_ctx=8192, num_predict=8192))
-      resp_text = resp['message']['content'].replace("```json", "").replace("```", "")
-      resp_json: ReevaluationResponse = ReevaluationResponse(**json.loads(resp_text))
+      resp_json = None
+      for j in range(1, 4):
+        try:
+          # request reevaluation from the server
+          resp = ollama_client.chat(model=MODEL_REEVALUATE, messages=chat_messages_reevaluate, options=ollama.Options(temperature=TEMPERATURE_REEVALUATE, num_ctx=8192, num_predict=8192))
+          resp_text = resp['message']['content'].replace("```json", "").replace("```", "")
+          resp_json: ReevaluationResponse = ReevaluationResponse(**json.loads(resp_text))
+          break
+        except Exception as e:
+          print()
+          print(f"Error: An unexpected error occurred while reevaluating (attempt {j}/3): {e}")
+          continue
 
-      if (resp_json.status == True):
+      if (resp_json and resp_json.status == True):
         # Iterate through each translation update
         for translation in resp_json.updatedTranslations:
           # Check if the index matches the translation id
