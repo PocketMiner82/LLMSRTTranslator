@@ -72,11 +72,13 @@ Dabei sollst du besonders darauf achten, dass:
 Du musst NICHT ALLE Untertitel verbessern, sondern nur die, die deiner Ansicht nach besser übersetzt werden könnten.
 Falsche Übersetzungen müssen IMMER verbessert werden, richtige Übersetzungen dürfen natürlich NICHT verbessert werden.
 
+Wichtig: Denk daran, dass falls der "<br>" HTML-Code im Englischen verwendet wurde, diesen in der verbesserten Übersetzung beizubehalten.
+
 Der Aufbau der SRT Datei ist folgendermaßen:
 id
 timestamp-from --> timestamp-to
-englischer Untertitel. kann über mehrere Zeilen gehen
-{TRANSLATION_PREFIX}maschinell übersetzter, zu verbessernder deutscher Untertitel. kann über mehrere Zeilen gehen{TRANSLATION_SUFFIX}
+englischer Untertitel.
+{TRANSLATION_PREFIX}maschinell übersetzter, zu verbessernder deutscher Untertitel.{TRANSLATION_SUFFIX}
 
 Du sprichst direkt mit einem Python-Programm. Daher darfst du NUR in JSON antworten.
 Formatiere deine Antwort NICHT. Verwende KEIN MARKDOWN (keine '`' Zeichen) sondern außschließlich die folgende JSON-Struktur:
@@ -87,19 +89,17 @@ Formatiere deine Antwort NICHT. Verwende KEIN MARKDOWN (keine '`' Zeichen) sonde
     {{
       // die id der verbesserten Übersetzung der SRT Datei.
       "id": 1,
-      // NUR die verbesserte deutsche Übersetzung, ohne die HTML-Tags, aber MIT Zeilenumbrüchen
-      "t": "Hier steht die bessere Übersetzung für id 1 drin.\\nNeue Zeilen sind möglich."
+      // NUR die verbesserte deutsche Übersetzung, ohne die HTML-Tags, nur "<br>"-Tags sind erlaubt.
+      "t": "Hier steht die bessere Übersetzung für id 1 drin.<br>Neue Zeilen sind möglich."
     }},
     {{
       // die id der verbesserten Übersetzung der SRT Datei.
       "id": 2,
-      // NUR die verbesserte deutsche Übersetzung, ohne die HTML-Tags, aber MIT Zeilenumbrüchen
-      "t": "Hier steht die bessere Übersetzung für id 2 drin.\\nNeue Zeilen sind möglich."
+      // NUR die verbesserte deutsche Übersetzung, ohne die HTML-Tags, nur "<br>"-Tags sind erlaubt.
+      "t": "Hier steht die bessere Übersetzung für id 2 drin.<br>Neue Zeilen sind möglich."
     }}
   ]
 }}
-
-Denk daran, Zeilenumbrüche IMMER im JSON mit "\\n" zu escapen.
 
 Wenn keine Änderungen vorgenommen wurden, gib bitte trotzdem eine Antwort im obigen Format, wobei "status" auf false gesetzt werden muss und "updatedTranslations" leer bleibt.
 """
@@ -345,6 +345,9 @@ def reevaluateTranslatedSRTFile(subs: list[srt.Subtitle]) -> list[srt.Subtitle]:
     total_batches = math.floor(len(subs) / 50)
     for i in range(0, len(subs), 50):
       batch_subs = subs[i:i + 50]
+      for batch_sub in subs:
+        batch_sub.content = batch_sub.content.replace("\n", "<br>")
+
       subs_text = srt.compose(batch_subs, reindex=False)
 
       chat_messages_reevaluate = [
