@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import json
+import math
 import os
 import sys
 import ollama
@@ -326,49 +327,62 @@ def translateSRTFile(subs: list[srt.Subtitle]) -> list[srt.Subtitle]:
   return subs
 
 def reevaluateTranslatedSRTFile(subs: list[srt.Subtitle]) -> list[srt.Subtitle]:
+  """
+  Reevaluate the translated subtitles in batches of 50 to improve translation accuracy
+  and correctness, especially focusing on contextual understanding and grammatical
+  correctness.
+
+  Args:
+    subs (list[srt.Subtitle]): A list of subtitles to be reevaluated.
+
+  Returns:
+    list[srt.Subtitle]: A list of subtitles with possibly corrected translations.
+  """
   try:
-    subs_text = srt.compose(subs)
-
-    chat_messages_reevaluate = [
-      {
-        'role': 'system',
-        'content': SYSTEM_PROMPT_REEVALUATE
-      },
-      {
-        'role': 'user',
-        'content': PROMPT_REEVALUATE.replace("%file%", subs_text)
-      }
-    ]
-
-    # request reevaluation from the server
-    resp = ollama_client.chat(model=MODEL_REEVALUATE, messages=chat_messages_reevaluate, options=ollama.Options(temperature=TEMPERATURE_REEVALUATE, num_ctx=8192, num_predict=8192))
-    resp_text = resp['message']['content'].replace("```json", "").replace("```", "")
-    print(resp_text)
-    resp_json: ReevaluationResponse = ReevaluationResponse(**json.loads(resp_text))
-
     corrected_subs = subs.copy()
-    if (resp_json.status == True):
-      # Iterate through each translation update
-      for translation in resp_json.updatedTranslations:
-        # Check if the index matches the translation id
-        if corrected_subs[translation.id - 1].index == translation.id:
-          # Update the content by replacing the translation
-          corrected_subs[translation.id - 1].content = re.sub(
-            f"{re.escape(TRANSLATION_PREFIX)}.*?{re.escape(TRANSLATION_SUFFIX)}",
-            f"{TRANSLATION_PREFIX}{translation.t}{TRANSLATION_SUFFIX}",
-            corrected_subs[translation.id - 1].content,
-            flags=re.DOTALL
-          )
-        else:
-          print("Error: subtitle index mismatch, aborting reevaluation.")
-          return subs
-      subs = corrected_subs
+    total_batches = math.floor(len(subs) / 50)
+    for i in range(0, len(subs), 50):
+      batch_subs = subs[i:i + 50]
+      subs_text = srt.compose(batch_subs, reindex=False)
 
-      print(f"Corrected {len(resp_json.updatedTranslations)} subtitle translations.")
-    else:
-      print("There are no translations to correct.")
+      chat_messages_reevaluate = [
+        {
+          'role': 'system',
+          'content': SYSTEM_PROMPT_REEVALUATE
+        },
+        {
+          'role': 'user',
+          'content': PROMPT_REEVALUATE.replace("%file%", subs_text)
+        }
+      ]
 
-    return subs
+      # request reevaluation from the server
+      resp = ollama_client.chat(model=MODEL_REEVALUATE, messages=chat_messages_reevaluate, options=ollama.Options(temperature=TEMPERATURE_REEVALUATE, num_ctx=8192, num_predict=8192))
+      resp_text = resp['message']['content'].replace("```json", "").replace("```", "")
+      resp_json: ReevaluationResponse = ReevaluationResponse(**json.loads(resp_text))
+
+      if (resp_json.status == True):
+        # Iterate through each translation update
+        for translation in resp_json.updatedTranslations:
+          # Check if the index matches the translation id
+          if corrected_subs[translation.id - 1].index == translation.id:
+            # Update the content by replacing the translation
+            corrected_subs[translation.id - 1].content = re.sub(
+              f"{re.escape(TRANSLATION_PREFIX)}.*?{re.escape(TRANSLATION_SUFFIX)}",
+              f"{TRANSLATION_PREFIX}{translation.t}{TRANSLATION_SUFFIX}",
+              corrected_subs[translation.id - 1].content,
+              flags=re.DOTALL
+            )
+          else:
+            print()
+            print("Error: subtitle index mismatch, aborting reevaluation.")
+            return subs
+
+      progress = ((i // 50) + 1) / total_batches * 100
+      print(f"\rReevaluating... {progress:.2f}% complete", end='')
+
+    print()
+    return corrected_subs
   except Exception as e:
     print(f"Error: An unexpected error occurred while reevaluating: {e}")
     return subs
