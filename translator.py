@@ -45,7 +45,7 @@ TRANSLATION_PREFIX = "<span style=\"color: yellow;\"><i>"
 TRANSLATION_SUFFIX = "</i></span>"
 
 # Whether to send the translated file to a specified LLM again to try to fix bad translations
-REEVALUATION_ENABLED = True
+REEVALUATION_ENABLED = False
 
 # Model to use for translation reevaluation
 # Use a model with a large context length, e.g. llama3.1 or llama3.2
