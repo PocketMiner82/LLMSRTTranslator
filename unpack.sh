@@ -34,5 +34,3 @@ for file in *.srt; do
 done
 
 mv *.zip ../finished_translations || exit 1
-
-python ../translator.py

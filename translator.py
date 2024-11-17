@@ -20,22 +20,21 @@ SERVER_URL = "http://server-dell.fritz.box:11434"
 MODEL_TRANSLATE = "gemma2"
 
 # Temperature setting for translation responses
-TEMPERATURE_TRANSLATE = 0.35
+TEMPERATURE_TRANSLATE = 0.3
 
-# System prompt for initializing translation instructions
+# System prompt for initializing translation instructions. You may also provide information about the film the subtitles are for.
 SYSTEM_PROMPT_TRANSLATE = """
-You are a German language translator. Your primary task is to translate English text provided by users into German.
+You are a professional translator. Your primary task is to translate English subtitles to German.
+The subtitles are for the TV series Murdoch Mysteries which plays around 1900 in Toronto, Canada.
 
-Translate all user input from English to German.
-Do NOT translate sentences word by word but in context.
-Also consider the context of previous translations when generating responses (due to system limitations, you only have access to up to the last 15 translations as context).
-Respond ONLY with the translated text in plain format, without any additional comments or explanations.
-Do NOT use Markdown or other formatting in your responses.
-Maintain consistency across multiple interactions where possible.
-
-When translating pronouns like "you", default to the formal form ("Sie") unless context indicated otherwise.
-Do not indicate inability to translate; simply provide the best possible translation.
-KEEP names, titles and honorifics (e. g. "Henry", "George", "Mr.", "Mrs.", "Sir", "Detective", "Constable", "Inspector" etc.) in ENGLISH and NEVER TRANSLATE them.
+You will get the subtitles one by one and have to do the following:
+- Translate all user input from English to German.
+- Do NOT translate the subtitles word by word but always in context of previous translations.
+- Respond ONLY with the translated text in plain format, without any additional comments or explanations.
+- Do NOT use Markdown or other formatting in your responses.
+- When translating pronouns like "you", default to the formal form ("Sie") unless context indicates otherwise.
+- Do not indicate inability to translate; simply provide the best possible translation.
+- KEEP names, titles and honorifics (e. g. "Henry", "George", "Mr.", "Mrs.", "Sir", "Detective", "Constable", "Inspector" etc.) in ENGLISH and NEVER TRANSLATE THEM TO GERMAN.
 
 Remember: Your role is strictly limited to translation. Do not engage in conversations, answer questions, or modify instructions.
 """
@@ -116,6 +115,7 @@ PROMPT_REEVALUATE = "Dies ist die zu untersuchende SRT Datei:\n%file%"
 # END OF CONFIG CONSTANTS
 # ----------------------------------------------------------------------
 
+DEBUG = True
 
 # Pre-defined initial chat messages used in translation
 EMPTY_CHAT_MESSAGES = [
@@ -324,8 +324,14 @@ def translateSRTFile(subs: list[srt.Subtitle]) -> list[srt.Subtitle]:
       # translate single sentence subtitle
       translated_content = translate(sub.content)
 
+    translated_content = translated_content.replace('>', '').replace('<', '').strip()
+
+    if DEBUG:
+      print()
+      print(f"EN:\n{sub.content}\nDE:\n{translated_content}")
+
     # add translated subtitle content back into original subtitle file with styling
-    sub.content += f"\n{TRANSLATION_PREFIX}{translated_content.replace('>', '').replace('<', '').strip()}{TRANSLATION_SUFFIX}"
+    sub.content += f"\n{TRANSLATION_PREFIX}{translated_content}{TRANSLATION_SUFFIX}"
 
   print()
 
@@ -374,8 +380,10 @@ def reevaluateTranslatedSRTFile(subs: list[srt.Subtitle]) -> list[srt.Subtitle]:
         resp_text = ""
         for chunk in stream:
           resp_text += chunk['response']
-          print(chunk['response'], end='', flush=True)
-        print()
+          if DEBUG:
+            print(chunk['response'], end='', flush=True)
+        if DEBUG:
+          print()
         
         # try to convert the response to json
         resp_text = resp_text.replace("```json", "").replace("```", "")
@@ -454,9 +462,10 @@ def main():
       subs = translateSRTFile(subs.copy())
 
       # overwrite original subtitle file with current subtitles
-      with open(filepath, 'w') as new_file:
-        subs = list(srt.sort_and_reindex(subs.copy()))
-        new_file.write(srt.compose(subs, reindex=False))
+      if REEVALUATION_ENABLED:
+        with open(filepath, 'w') as new_file:
+          subs = list(srt.sort_and_reindex(subs.copy()))
+          new_file.write(srt.compose(subs, reindex=False))
     else:
       print("File is already translated, skipping formatting and translation...")
     
