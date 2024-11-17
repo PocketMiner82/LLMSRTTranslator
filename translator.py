@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 
 import json
-import math
 import os
 import sys
 import traceback
@@ -49,21 +48,27 @@ TRANSLATION_SUFFIX = "</i></span>"
 REEVALUATION_ENABLED = True
 
 # Model to use for translation reevaluation
-# Use a model with a large context length, e.g. llama3.1
-# Best is a model with >= 128k context length
+# Use a model with a large context length, e.g. llama3.1 or llama3.2
+# You need a model with a large context length so that the whole subtitle file will fit in it.
 MODEL_REEVALUATE = "llama3.1"
 
-# The context length used for reevaluation. shouldn't be more than around half the max context size of your model
-CONTEXT_LENGTH_REEVALUATE = 42000
+# The context length used for reevaluation. Doesn't usually have to be more than around half the max context size of your model.
+CONTEXT_LENGTH_REEVALUATE = 42500
 
 # Temperature setting for translation reevaluation
 TEMPERATURE_REEVALUATE = 0
 
 # System prompt used to reevaluate an already translated SRT file.
 SYSTEM_PROMPT_REEVALUATE = f"""
-Du sollst die deutsche Übersetzung einer maschinell übersetzten SRT Untertiteldatei verbessern.
+Du sollst die deutsche Übersetzung einer bereits übersetzten SRT Untertiteldatei verbessern.
 
-Bitte verbessere die jeweilige Übersetzung eines Untertitels nur, wenn eine der folgenden Bedingungen zutrifft:
+Der Aufbau der SRT Datei ist folgendermaßen:
+id
+timestamp-from --> timestamp-to
+ENGLISCHER Untertitel.
+{TRANSLATION_PREFIX}bereits übersetzter, DEUTSCHER Untertitel.{TRANSLATION_SUFFIX}
+
+Bitte verbessere die jeweilige DEUTSCHE Übersetzung eines Untertitels nur dann, wenn eine der folgenden Bedingungen zutrifft:
 - Der gesamte Kontext aller Untertitel in der Datei wurde nicht gut einbezogen.
 - Die Übersetzungen sind unvollständig, grammatikalisch inkorrekt, schwer verständlich oder fehlerhaft.
 - Wenn nicht klar ist, ob "Du" oder "Sie" verwendet werden soll, MUSS das formellere "Sie" verwendet werden.
@@ -72,19 +77,13 @@ Bitte verbessere die jeweilige Übersetzung eines Untertitels nur, wenn eine der
 Beispiele für RICHTIGE Übersetzungen:
 - Sir -> Sir
 - Henry -> Henry
-- How are you, Detective? --> Wie geht es Ihnen, Detective?
+- How are you, Detective? -> Wie geht es Ihnen, Detective?
 Beispiele für FALSCHE Übersetzungen:
 - Sir -> Herr
 - Henry -> Heinrich
-- How are you, Detective? --> Wie geht es dir, Detektiv?
+- How are you, Detective? -> Wie geht es dir, Detektiv?
 
-Wichtig: Denk daran, dass falls der "<br>" HTML-Code im Englischen verwendet wurde, diesen in der verbesserten Übersetzung beizubehalten.
-
-Der Aufbau der SRT Datei ist folgendermaßen:
-id
-timestamp-from --> timestamp-to
-englischer Untertitel.
-{TRANSLATION_PREFIX}maschinell übersetzter, zu verbessernder deutscher Untertitel.{TRANSLATION_SUFFIX}
+Wichtig: Denk daran, dass falls der "<br>" HTML-Code im Englischen verwendet wurde, diesen in der verbesserten deutschen Übersetzung beizubehalten.
 
 Du sprichst direkt mit einem Python-Programm. Daher darfst du NUR in JSON antworten.
 Formatiere deine Antwort NICHT. Verwende KEIN MARKDOWN (keine '`' Zeichen) sondern außschließlich die folgende JSON-Struktur:
@@ -94,15 +93,15 @@ Formatiere deine Antwort NICHT. Verwende KEIN MARKDOWN (keine '`' Zeichen) sonde
   "updatedTranslations": [
     {{
       // die id der verbesserten Übersetzung der SRT Datei.
-      "id": 1,
-      // NUR die verbesserte deutsche Übersetzung, ohne die HTML-Tags, nur "<br>"-Tags sind erlaubt.
-      "t": "Hier steht die bessere Übersetzung für id 1 drin.<br>Neue Zeilen sind möglich."
+      "id": ...,
+      // NUR die verbesserte DEUTSCHE Übersetzung, ohne die HTML-Tags, nur "<br>"-Tags sind erlaubt.
+      "t": "..."
     }},
     {{
       // die id der verbesserten Übersetzung der SRT Datei.
-      "id": 2,
-      // NUR die verbesserte deutsche Übersetzung, ohne die HTML-Tags, nur "<br>"-Tags sind erlaubt.
-      "t": "Hier steht die bessere Übersetzung für id 2 drin.<br>Neue Zeilen sind möglich."
+      "id": ...,
+      // NUR die verbesserte DEUTSCHE Übersetzung, ohne die HTML-Tags, nur "<br>"-Tags sind erlaubt.
+      "t": "..."
     }}
   ]
 }}
@@ -368,7 +367,6 @@ def reevaluateTranslatedSRTFile(subs: list[srt.Subtitle]) -> list[srt.Subtitle]:
                                   temperature=TEMPERATURE_REEVALUATE,
                                   num_ctx=CONTEXT_LENGTH_REEVALUATE,
                                   num_predict=-1,
-                                  num_gpu=15
                                 )
         )
         
