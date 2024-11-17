@@ -48,7 +48,12 @@ TRANSLATION_SUFFIX = "</i></span>"
 REEVALUATION_ENABLED = True
 
 # Model to use for translation reevaluation
-MODEL_REEVALUATE = "gemma2"
+# Use a model with a large context length, e.g. llama3.1
+# Best is a model with >= 128k context length
+MODEL_REEVALUATE = "llama3.1"
+
+# The context length used for reevaluation. shouldn't be more than around half the max context size of your model
+CONTEXT_LENGTH_REEVALUATE = 50000
 
 # Temperature setting for translation reevaluation
 TEMPERATURE_REEVALUATE = 0
@@ -57,20 +62,20 @@ TEMPERATURE_REEVALUATE = 0
 SYSTEM_PROMPT_REEVALUATE = f"""
 Du sollst die deutsche Übersetzung einer maschinell übersetzten SRT Untertiteldatei verbessern.
 
-Dabei sollst du besonders darauf achten, dass:
-- der gesamten Kontext der Untertitel besser einbezogen wird.
-- die Übersetzungen vollständig, grammatikalisch korrekt, leicht zu verstehen und fehlerfrei sind.
-- wenn nicht klar ist, ob "Du" oder "Sie" verwendet werden soll, das formellere "Sie" verwendet wird.
-- Anreden, Namen und Titel, wie "Henry", "George", "Mr.", "Mrs.", "Sir", "Detective", "Constable", "Inspector" NIE ins Deutsche übersetzt wurden. Diese müssen UNBEDINGT ENGLISCH bleiben.
-  RICHTIG sind demnach z. B. folgende Übersetzungen:
-  - Sir -> Sir
-  - Henry -> Henry
-  FALSCH sind demnach z. B. folgende Übersetzungen:
-  - Sir -> Herr
-  - Henry -> Heinrich
+Bitte verbessere die jeweilige Übersetzung eines Untertitels nur, wenn eine der folgenden Bedingungen zutrifft:
+- Der gesamte Kontext aller Untertitel in der Datei wurde nicht gut einbezogen.
+- Die Übersetzungen sind unvollständig, grammatikalisch inkorrekt, schwer verständlich oder fehlerhaft.
+- Wenn nicht klar ist, ob "Du" oder "Sie" verwendet werden soll, MUSS das formellere "Sie" verwendet werden.
+- Anreden, Namen und Titel, wie "Henry", "George", "Mr.", "Mrs.", "Sir", "Detective", "Constable", "Inspector" wurden ins Deutsche übersetzt. Diese Anreden, Namen und Titel müssen UNBEDINGT ENGLISCH bleiben.
 
-Du musst NICHT ALLE Untertitel verbessern, sondern nur die, die deiner Ansicht nach besser übersetzt werden könnten.
-Falsche Übersetzungen müssen IMMER verbessert werden, richtige Übersetzungen dürfen natürlich NICHT verbessert werden.
+Beispiele für RICHTIGE Übersetzungen:
+- Sir -> Sir
+- Henry -> Henry
+- How are you, Detective? --> Wie geht es Ihnen, Detective?
+Beispiele für FALSCHE Übersetzungen:
+- Sir -> Herr
+- Henry -> Heinrich
+- How are you, Detective? --> Wie geht es dir, Detektiv?
 
 Wichtig: Denk daran, dass falls der "<br>" HTML-Code im Englischen verwendet wurde, diesen in der verbesserten Übersetzung beizubehalten.
 
@@ -330,7 +335,7 @@ def translateSRTFile(subs: list[srt.Subtitle]) -> list[srt.Subtitle]:
 
 def reevaluateTranslatedSRTFile(subs: list[srt.Subtitle]) -> list[srt.Subtitle]:
   """
-  Reevaluate the translated subtitles in batches of 50 to improve translation accuracy
+  Reevaluate the translated subtitles to improve translation accuracy
   and correctness, especially focusing on contextual understanding and grammatical
   correctness.
 
@@ -342,59 +347,62 @@ def reevaluateTranslatedSRTFile(subs: list[srt.Subtitle]) -> list[srt.Subtitle]:
   """
   try:
     corrected_subs = subs.copy()
-    total_batches = math.floor(len(subs) / 50)
-    for i in range(0, len(subs), 50):
-      batch_subs = subs[i:i + 50]
-      for batch_sub in subs:
-        batch_sub.content = batch_sub.content.replace("\n", "<br>")
 
-      subs_text = srt.compose(batch_subs, reindex=False)
+    # convert line breaks to HTML line breaks so the model understands them better.
+    for sub in corrected_subs:
+      sub.content = sub.content.replace("\n", "<br>")
 
-      chat_messages_reevaluate = [
-        {
-          'role': 'system',
-          'content': SYSTEM_PROMPT_REEVALUATE
-        },
-        {
-          'role': 'user',
-          'content': PROMPT_REEVALUATE.replace("%file%", subs_text)
-        }
-      ]
+    subs_text = srt.compose(corrected_subs, reindex=False)
+    resp_json = None
 
-      resp_json = None
-      for j in range(1, 4):
-        try:
-          # request reevaluation from the server
-          resp = ollama_client.chat(model=MODEL_REEVALUATE, messages=chat_messages_reevaluate, options=ollama.Options(temperature=TEMPERATURE_REEVALUATE, num_ctx=8192, num_predict=8192))
-          resp_text = resp['message']['content'].replace("```json", "").replace("```", "")
-          resp_json: ReevaluationResponse = ReevaluationResponse(**json.loads(resp_text))
-          break
-        except Exception as e:
-          print()
-          print(f"Error: An unexpected error occurred while reevaluating (attempt {j}/3): {e}")
-          continue
+    for j in range(1, 4):
+      try:
+        # request reevaluation from the LLM
+        stream = ollama_client.generate(
+          model=MODEL_REEVALUATE,
+          prompt=PROMPT_REEVALUATE.replace("%file%", subs_text),
+          system=SYSTEM_PROMPT_REEVALUATE,
+          options=ollama.Options(
+                                  temperature=TEMPERATURE_REEVALUATE,
+                                  num_ctx=CONTEXT_LENGTH_REEVALUATE,
+                                  num_predict=-1
+                                )
+        )
+        
+        # print current LLM output for reevaluation
+        resp_text = ""
+        for chunk in stream:
+          resp_text += chunk['message']['content']
+          print(chunk['message']['content'], end='', flush=True)
+        
+        # try to convert the response to json
+        resp_text = resp_text.replace("```json", "").replace("```", "")
+        resp_json: ReevaluationResponse = ReevaluationResponse(**json.loads(resp_text))
+        break
+      except Exception as e:
+        print(f"Error: An unexpected error occurred while reevaluating (attempt {j}/3): {e}")
+        continue
 
-      if (resp_json and resp_json.status == True):
-        # Iterate through each translation update
-        for translation in resp_json.updatedTranslations:
-          # Check if the index matches the translation id
-          if corrected_subs[translation.id - 1].index == translation.id:
-            # Update the content by replacing the translation
-            corrected_subs[translation.id - 1].content = re.sub(
-              f"{re.escape(TRANSLATION_PREFIX)}.*?{re.escape(TRANSLATION_SUFFIX)}",
-              f"{TRANSLATION_PREFIX}{translation.t}{TRANSLATION_SUFFIX}",
-              corrected_subs[translation.id - 1].content,
-              flags=re.DOTALL
-            )
-          else:
-            print()
-            print("Error: subtitle index mismatch, aborting reevaluation.")
-            return subs
+    if (resp_json and resp_json.status == True):
+      # Iterate through each translation update
+      for translation in resp_json.updatedTranslations:
+        # Check if the index matches the translation id
+        if corrected_subs[translation.id - 1].index == translation.id:
+          # Update the content by replacing the translation
+          corrected_subs[translation.id - 1].content = re.sub(
+            f"{re.escape(TRANSLATION_PREFIX)}.*?{re.escape(TRANSLATION_SUFFIX)}",
+            f"{TRANSLATION_PREFIX}{translation.t}{TRANSLATION_SUFFIX}",
+            corrected_subs[translation.id - 1].content,
+            flags=re.DOTALL
+          )
+        else:
+          print("Error: subtitle index mismatch, aborting reevaluation.")
+          return subs
 
-      progress = ((i // 50) + 1) / total_batches * 100
-      print(f"\rReevaluating... {progress:.2f}% complete", end='')
+    # convert HTML line breaks back to normal ones
+    for sub in corrected_subs:
+      sub.content = sub.content.replace("<br>", "\n")
 
-    print()
     return corrected_subs
   except Exception as e:
     print(f"Error: An unexpected error occurred while reevaluating: {e}")
