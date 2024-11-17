@@ -4,6 +4,7 @@ import json
 import math
 import os
 import sys
+import traceback
 import ollama
 import requests
 import srt
@@ -53,7 +54,7 @@ REEVALUATION_ENABLED = True
 MODEL_REEVALUATE = "llama3.1"
 
 # The context length used for reevaluation. shouldn't be more than around half the max context size of your model
-CONTEXT_LENGTH_REEVALUATE = 50000
+CONTEXT_LENGTH_REEVALUATE = 42000
 
 # Temperature setting for translation reevaluation
 TEMPERATURE_REEVALUATE = 0
@@ -362,25 +363,28 @@ def reevaluateTranslatedSRTFile(subs: list[srt.Subtitle]) -> list[srt.Subtitle]:
           model=MODEL_REEVALUATE,
           prompt=PROMPT_REEVALUATE.replace("%file%", subs_text),
           system=SYSTEM_PROMPT_REEVALUATE,
+          stream=True,
           options=ollama.Options(
                                   temperature=TEMPERATURE_REEVALUATE,
                                   num_ctx=CONTEXT_LENGTH_REEVALUATE,
-                                  num_predict=-1
+                                  num_predict=-1,
+                                  num_gpu=15
                                 )
         )
         
         # print current LLM output for reevaluation
         resp_text = ""
         for chunk in stream:
-          resp_text += chunk['message']['content']
-          print(chunk['message']['content'], end='', flush=True)
+          resp_text += chunk['response']
+          print(chunk['response'], end='', flush=True)
+        print()
         
         # try to convert the response to json
         resp_text = resp_text.replace("```json", "").replace("```", "")
         resp_json: ReevaluationResponse = ReevaluationResponse(**json.loads(resp_text))
         break
       except Exception as e:
-        print(f"Error: An unexpected error occurred while reevaluating (attempt {j}/3): {e}")
+        print(f"Error: An unexpected error occurred while reevaluating (attempt {j}/3):\n{"".join(traceback.format_exception(e))}\n")
         continue
 
     if (resp_json and resp_json.status == True):
