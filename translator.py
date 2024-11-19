@@ -115,7 +115,7 @@ PROMPT_REEVALUATE = "Dies ist die zu untersuchende SRT Datei:\n%file%"
 # END OF CONFIG CONSTANTS
 # ----------------------------------------------------------------------
 
-DEBUG = True
+DEBUG = False
 
 # Pre-defined initial chat messages used in translation
 EMPTY_CHAT_MESSAGES = [
@@ -434,7 +434,7 @@ def main():
   subs_dir = os.path.join(os.path.dirname(__file__), 'subs')
 
   # remove files ending in .gitkeep
-  files = [f for f in os.listdir(subs_dir) if not f.endswith('.gitkeep')]
+  files = sorted([f for f in os.listdir(subs_dir) if not f.endswith('.gitkeep')])
   total_files = len(files)
 
   # loop through all files in 'subs' directory
