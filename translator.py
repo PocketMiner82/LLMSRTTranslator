@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import copy
 import json
 import os
 import sys
@@ -20,30 +21,54 @@ SERVER_URL = "http://server-dell.fritz.box:11434"
 MODEL_TRANSLATE = "gemma2"
 
 # Temperature setting for translation responses
-TEMPERATURE_TRANSLATE = 0.3
+TEMPERATURE_TRANSLATE = 0.0
 
 # System prompt for initializing translation instructions. You may also provide information about the film the subtitles are for.
 SYSTEM_PROMPT_TRANSLATE = """
 You are a professional translator. Your primary task is to translate English subtitles to German.
-The subtitles are for the TV series Murdoch Mysteries which plays around 1900 in Toronto, Canada.
+Provide a natural-sounding translation that fits the provided context.
 
-You will get the subtitles one by one and have to do the following:
-- Translate all user input from English to German.
-- Do NOT translate the subtitles word by word but always in context of previous translations.
+The subtitles provided are for the TV series "Murdoch Mysteries" which plays around the year 1900 in Toronto, Canada.
+"""
+
+# Prompt template to request context-based translation
+PROMPT_TRANSLATE = """
+Instructions:
+- Ensure the translation maintains consistency with the previously translated subtitles.
+- Do NOT translate the subtitles word by word but always in context of previous translations. Use the future subtitles to anticipate and prepare for upcoming content.
+- Translate idioms and colloquialisms naturally while ensuring they make sense in German.
 - Respond ONLY with the translated text in plain format, without any additional comments or explanations.
 - Do NOT use Markdown or other formatting in your responses.
 - When translating pronouns like "you", default to the formal form ("Sie") unless context indicates otherwise.
 - Do not indicate inability to translate; simply provide the best possible translation.
-- KEEP names, titles and honorifics (e. g. "Henry", "George", "Mr.", "Mrs.", "Sir", "Detective", "Constable", "Inspector" etc.) in ENGLISH and NEVER TRANSLATE THEM TO GERMAN.
+- KEEP names, titles and honorifics (e. g. "Henry", "George", "Mr.", "Mrs.", "Sir", "Detective", "Constable", "Inspector" etc.) in ENGLISH and NEVER TRANSLATE THEM TO GERMAN!!!
+
+
+Previous subtitles [with the German translation in square brackets]:
+%prev_subs_and_translations%
+
+Current subtitle:
+%sub%
+
+Future subtitles:
+%future_subs%
+
 
 Remember: Your role is strictly limited to translation. Do not engage in conversations, answer questions, or modify instructions.
+
+Please provide your translation of the "Current subtitle" below:
 """
 
 # Prefix and Suffix that will be put before and after a single translated subtitle
 TRANSLATION_PREFIX = "<span style=\"color: yellow;\"><i>"
 TRANSLATION_SUFFIX = "</i></span>"
 
+# How many previous and future subtitles will be given to the LLM:
+# SUBTITLE_CONTEXT_COUNT previous and SUBTITLE_CONTEXT_COUNT future subtitles will be given to it.
+SUBTITLE_CONTEXT_COUNT = 15
+
 # Whether to send the translated file to a specified LLM again to try to fix bad translations
+# Note: This currently doesn't work very well, so I recommend to leave it disabled.
 REEVALUATION_ENABLED = False
 
 # Model to use for translation reevaluation
@@ -112,25 +137,20 @@ Wenn keine Änderungen vorgenommen wurden, gib bitte trotzdem eine Antwort im ob
 # The %file% placeholder will be replaced with the content of the translated SRT file.
 PROMPT_REEVALUATE = "Dies ist die zu untersuchende SRT Datei:\n%file%"
 
-# END OF CONFIG CONSTANTS
-# ----------------------------------------------------------------------
-
+# Print debug output to console?
 DEBUG = False
 
-# Pre-defined initial chat messages used in translation
-EMPTY_CHAT_MESSAGES = [
-  {
-    'role': 'system',
-    'content': SYSTEM_PROMPT_TRANSLATE
-  }
-]
+# END OF CONFIG CONSTANTS
+# ----------------------------------------------------------------------
 
 # Client for interfacing with the Ollama server
 ollama_client = Client(host=SERVER_URL)
 
-# Holds current chat messages with translation instructions
-chat_messages = EMPTY_CHAT_MESSAGES
+# Holds the last up to SUBTITLE_CONTEXT_COUNT translations before the current subtitle
+prev_subs_and_translations: list[tuple[str, str]]
 
+# Holds the next up to SUBTITLE_CONTEXT_COUNT translations in the future of the current subtitle
+future_subs: list[str]
 
 class ReevaluationResponse():
   def __init__(self, status: bool, updatedTranslations):
@@ -194,7 +214,7 @@ def starts_with_hyphen(text: str) -> bool:
     text = remove_html_tags(text)
     return text.startswith("-")
 
-def translate(text:str, lang_from="en", lang_to="de") -> str:
+def translate(sub_text:str, lang_from="en", lang_to="de") -> str:
   """
   Translate text from one language to another using the Ollama client.
 
@@ -206,36 +226,49 @@ def translate(text:str, lang_from="en", lang_to="de") -> str:
   Returns:
     str: The translated text.
   """
-  global chat_messages
+  global prev_subs_and_translations, future_subs
+
+  # create a hyphenated list in string format of the previous translations
+  prev_subs_and_translations_text = ""
+  for sub, translation in prev_subs_and_translations:
+    prev_subs_and_translations_text += f"- {sub}\n  [{translation}]\n"
+
+  if not prev_subs_and_translations:
+    prev_subs_and_translations_text = "-"
+
+  prev_subs_and_translations_text = prev_subs_and_translations_text.strip()
+
+  # create a hyphenated list in string format of the previous subs
+  future_subs_text = ""
+  for sub in future_subs:
+    future_subs_text += f"- {sub}\n"
+
+  if not future_subs:
+    future_subs_text = "-"
+
+  future_subs_text = future_subs_text.strip()
 
   # ignore HTML tags
-  text = remove_html_tags(text)
+  sub_text = remove_html_tags(sub_text)
 
   try:
-    # append user text to chat history
-    chat_messages.append({
-      'role': 'user',
-      'content': f"Translate this:\n'{text}'"
-    })
-
     # request translation from the server
-    resp = ollama_client.chat(model=MODEL_TRANSLATE, messages=chat_messages, options=ollama.Options(temperature=TEMPERATURE_TRANSLATE))
-    resp_text = resp['message']['content']
-
-    # append translated text to chat history
-    chat_messages.append({
-      'role': 'translator',
-      'content': resp_text
-    })
-
-    # trim chat history if it exceeds 15 translation request-answer pairs
-    # always keep the system prompt (first entry)
-    if len(chat_messages) > 31:
-      del chat_messages[1:len(chat_messages) - 30]
+    resp = ollama_client.generate(
+      model=MODEL_TRANSLATE,
+      prompt=PROMPT_TRANSLATE
+          .replace("%prev_subs_and_translations%", prev_subs_and_translations_text)
+          .replace("%sub%", sub_text)
+          .replace("%future_subs%", future_subs_text),
+      system=SYSTEM_PROMPT_TRANSLATE,
+      options=ollama.Options(
+        temperature=TEMPERATURE_TRANSLATE
+      )
+    )
+    resp_text = resp['response']
 
     return resp_text
   except Exception as e:
-    print(f"Error: An unexpected error occurred while translating: {e}")
+    print(f"\nError: An unexpected error occurred while translating: {e}")
     return ""
 
 def reformatSRTFile(subs: list[srt.Subtitle]) -> list[srt.Subtitle]:
@@ -291,6 +324,64 @@ def reformatSRTFile(subs: list[srt.Subtitle]) -> list[srt.Subtitle]:
 
   return formatted_subs
 
+def reset_context():
+  """
+  Resets the context by clearing global variables related to future
+  subtitles and previous subtitles along with translations.
+  """
+  global future_subs, prev_subs_and_translations
+
+  future_subs = []
+  prev_subs_and_translations = []
+
+def update_future_subs(index: int, skip_first: int, subs: list[srt.Subtitle]):
+  """
+  Updates the list of future subtitles (always excluding the current one) based on the given index.
+
+  Args:
+    index (int): The current index in the subtitle list.
+    skip_first (int): Also skip the next n subtitles.
+    subs (list[srt.Subtitle]): The list of subtitle objects.
+  """
+  global future_subs
+  skip_first += 1
+
+  future_subs = []
+  # slice from excluding current subtitle to the next SUBTITLE_CONTEXT_COUNT subtitles. list will always be <=SUBTITLE_CONTEXT_COUNT
+  for sub in [sub.content for sub in subs[index:]]:
+    # also handle multi-line subtitle content
+    sub_lines = sub.split("\n")
+    for line in sub_lines:
+      if skip_first > 0:
+        skip_first -= 1
+        continue
+
+      # retain hyphenation in translation
+      if starts_with_hyphen(line):
+        line = line[1:]
+
+      future_subs.append(line.strip())
+
+      # never go above SUBTITLE_CONTEXT_COUNT
+      if len(future_subs) >= SUBTITLE_CONTEXT_COUNT:
+        return
+    
+
+def append_prev_subs_and_translations(sub_and_translation: tuple[str, str]) -> list[tuple[str, str]]:
+  """
+  Appends a subtitle and its translation to the global list of previous
+  subtitles and translations, keeping only the latest entries based on
+  the context count.
+
+  Args:
+    sub_and_translation (tuple[str, str]): A tuple containing the subtitle and its translation.
+  """
+  global prev_subs_and_translations
+  prev_subs_and_translations.append(sub_and_translation)
+
+  while(len(prev_subs_and_translations) > SUBTITLE_CONTEXT_COUNT):
+    prev_subs_and_translations.pop(0)
+
 def translateSRTFile(subs: list[srt.Subtitle]) -> list[srt.Subtitle]:
   """
   Translate subtitle contents and add translated text with styling.
@@ -301,7 +392,12 @@ def translateSRTFile(subs: list[srt.Subtitle]) -> list[srt.Subtitle]:
   Returns:
     list[srt.Subtitle]: A list of subtitles with translated content added.
   """
-  global chat_messages
+
+  # reset context for next file processing
+  reset_context()
+
+  original_subs = copy.deepcopy(subs)
+
   total_subs = len(subs)
   for index, sub in enumerate(subs):
     # calculate and print translation progress
@@ -312,19 +408,37 @@ def translateSRTFile(subs: list[srt.Subtitle]) -> list[srt.Subtitle]:
     if "\n" in sub.content:
       # handle multi-line subtitle content
       sub_lines = sub.content.split("\n")
-      for line in sub_lines:
+      first = True
+      for sub_index, line in enumerate(sub_lines):
+        update_future_subs(index, sub_index, original_subs)
+
         # retain hyphenation in translation
-        if line.startswith("-"):
+        if starts_with_hyphen(line):
           translated_content += "- "
           line = line[1:]
+        elif not first:
+          print(f"Error: found illegal new line character at sub index {sub.index}")
+          exit(1)
+          return
 
         line = line.strip()
-        translated_content += translate(line).strip() + "\n"
-    else:
-      # translate single sentence subtitle
-      translated_content = translate(sub.content)
+        translation = remove_html_tags(translate(line)).strip()
+        translated_content += translation + "\n"
 
-    translated_content = translated_content.replace('>', '').replace('<', '').strip()
+        # track the last SUBTITLE_CONTEXT_COUNT translations
+        append_prev_subs_and_translations((remove_html_tags(line), translation))
+
+        first = False
+    else:
+      update_future_subs(index, 0, original_subs)
+
+      # translate single sentence subtitle
+      translated_content = remove_html_tags(translate(sub.content)).strip()
+
+      # track the last SUBTITLE_CONTEXT_COUNT translations
+      append_prev_subs_and_translations((remove_html_tags(sub.content), translated_content))
+
+    translated_content = translated_content.strip()
 
     if DEBUG:
       print()
@@ -335,8 +449,6 @@ def translateSRTFile(subs: list[srt.Subtitle]) -> list[srt.Subtitle]:
 
   print()
 
-  # reset chat messages for next file processing
-  chat_messages = EMPTY_CHAT_MESSAGES
   return subs
 
 def reevaluateTranslatedSRTFile(subs: list[srt.Subtitle]) -> list[srt.Subtitle]:
@@ -352,7 +464,7 @@ def reevaluateTranslatedSRTFile(subs: list[srt.Subtitle]) -> list[srt.Subtitle]:
     list[srt.Subtitle]: A list of subtitles with possibly corrected translations.
   """
   try:
-    corrected_subs = subs.copy()
+    corrected_subs = copy.deepcopy(subs)
 
     # convert line breaks to HTML line breaks so the model understands them better.
     for sub in corrected_subs:
@@ -456,15 +568,15 @@ def main():
 
     # check if subtitle file is already translated
     if (not TRANSLATION_PREFIX in subs[0].content and not TRANSLATION_SUFFIX in subs[0].content):
-      subs = reformatSRTFile(subs.copy())
+      subs = reformatSRTFile(copy.deepcopy(subs))
 
       # process each reformatted subtitle for translation
-      subs = translateSRTFile(subs.copy())
+      subs = translateSRTFile(copy.deepcopy(subs))
 
       # overwrite original subtitle file with current subtitles
       if REEVALUATION_ENABLED:
         with open(filepath, 'w') as new_file:
-          subs = list(srt.sort_and_reindex(subs.copy()))
+          subs = list(srt.sort_and_reindex(copy.deepcopy(subs)))
           new_file.write(srt.compose(subs, reindex=False))
     else:
       print("File is already translated, skipping formatting and translation...")
@@ -472,7 +584,7 @@ def main():
     # we can be sure now that the file is translated.
     if REEVALUATION_ENABLED:
       print("Reevaluation is enabled, trying to correct bad translations (this may take a while)...")
-      subs = reevaluateTranslatedSRTFile(subs.copy())
+      subs = reevaluateTranslatedSRTFile(copy.deepcopy(subs))
     
     # overwrite original subtitle file with current subtitles
     with open(filepath, 'w') as new_file:
