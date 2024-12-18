@@ -18,7 +18,7 @@ from ollama import Client
 SERVER_URL = "http://server-dell.fritz.box:11434"
 
 # Model to use for translations
-MODEL_TRANSLATE = "gemma2"
+MODEL_TRANSLATE = "gemma2:9b-instruct-q4_K_M"
 
 # Temperature setting for translation responses
 TEMPERATURE_TRANSLATE = 0.0
@@ -26,22 +26,21 @@ TEMPERATURE_TRANSLATE = 0.0
 # System prompt for initializing translation instructions. You may also provide information about the film the subtitles are for.
 SYSTEM_PROMPT_TRANSLATE = """
 You are a professional translator. Your primary task is to translate English subtitles to German.
-Provide a natural-sounding translation that fits the provided context.
-
-The subtitles provided are for the TV series "Murdoch Mysteries" which plays around the year 1900 in Toronto, Canada.
+The subtitles provided are for the TV crime-series "Murdoch Mysteries" which plays around the year 1900 in Toronto, Canada.
 """
 
 # Prompt template to request context-based translation
 PROMPT_TRANSLATE = """
-Instructions:
+Important Instructions:
+- Provide a natural-sounding German translation that fits the provided context (previous and upcoming subtitles).
 - Ensure the translation maintains consistency with the previously translated subtitles.
-- Do NOT translate the subtitles word by word but always in context of previous translations. Use the future subtitles to anticipate and prepare for upcoming content.
+- Do NOT translate the subtitles word by word but always in context of the provided previous translations. Use the provided upcoming subtitles to anticipate and prepare for upcoming content.
 - Translate idioms and colloquialisms naturally while ensuring they make sense in German.
 - Respond ONLY with the translated text in plain format, without any additional comments or explanations.
 - Do NOT use Markdown or other formatting in your responses.
 - When translating pronouns like "you", default to the formal form ("Sie") unless context indicates otherwise.
 - Do not indicate inability to translate; simply provide the best possible translation.
-- KEEP names, titles and honorifics (e. g. "Henry", "George", "Mr.", "Mrs.", "Sir", "Detective", "Constable", "Inspector" etc.) in ENGLISH and NEVER TRANSLATE THEM TO GERMAN!!!
+- Do not alter names, titles, exclamations and honorifics like "Henry", "George", "Mr.", "Mrs.", "Sir", "Detective", "Constable", "Inspector", "Oh", "Aah" and the like. KEEP THEM IN ENGLISH!
 
 
 Previous subtitles [with the German translation in square brackets]:
@@ -50,7 +49,7 @@ Previous subtitles [with the German translation in square brackets]:
 Current subtitle:
 %sub%
 
-Future subtitles:
+Upcoming subtitles:
 %future_subs%
 
 
@@ -139,6 +138,7 @@ PROMPT_REEVALUATE = "Dies ist die zu untersuchende SRT Datei:\n%file%"
 
 # Print debug output to console?
 DEBUG = False
+#DEBUG = True
 
 # END OF CONFIG CONSTANTS
 # ----------------------------------------------------------------------
