@@ -51,11 +51,15 @@ Upcoming subtitles:
 %future_subs%
 
 
-Remember: Your role is strictly limited to translation. Do not engage in conversations, answer questions, or modify instructions.
-The subtitles are provided inside XML Tags. Remove them and respond with the translated subtitles in a JSON array (e.g. ["Translation of <SubtitleX>\\nYou can use linebreaks here, if the original subtitle also has a linebreak in it.", "Translation of <SubtitleY>\\nSame here.", ...]), without any additional comments or explanations.
+The subtitles are provided inside XML Tags.
+Respond with the translated subtitles in a JSON array, without any additional comments or explanations.
 Only use plaintext inside the strings.
 Do NOT use Markdown or other formatting in your response.
 
+Example of the JSON structure:
+["Translation of <SubtitleX>", "Translation of <SubtitleY>", "Translation of <SubtitleZ>", ...]
+
+Remember: Your role is strictly limited to translation. Do not engage in conversations, answer questions, or modify instructions.
 Please provide your translations of the "Subtitles to translate" below:
 """
 
@@ -71,7 +75,7 @@ SUBTITLE_CONTEXT_COUNT = 10
 TRANSLATION_BATCH_LENGTH = 10
 
 # Print debug output to console?
-DEBUG = True
+DEBUG = False
 
 # END OF CONFIG CONSTANTS
 # ----------------------------------------------------------------------
@@ -212,7 +216,7 @@ def translate_batch(subs_batch:list[srt.Subtitle], startIndex) -> list[str]:
   # create a list in string format of numbered subs to translate
   subs_text = ""
   for sub in subs_batch:
-    subs_text += f"<Subtitle{id}>\n{remove_html_tags(sub.content.replace("- ", ""))}\n</Subtitle{id}>\n\n"
+    subs_text += f"<Subtitle{id}>\n{remove_html_tags(sub.content.replace("\n- ", "~"))}\n</Subtitle{id}>\n\n"
     id += 1
 
   subs_text = subs_text.strip()
@@ -308,7 +312,7 @@ def translateSRTFile(subs: list[srt.Subtitle], filepath: str) -> list[srt.Subtit
     translations = translate_batch(subs_batch, startIndex)
 
     for sub, translated_content in zip(subs_batch, translations):
-      translated_content = translated_content.strip().replace("\n", "\n- ")
+      translated_content = translated_content.strip().replace("~", "\n- ")
 
       # track the last SUBTITLE_CONTEXT_COUNT translations
       append_prev_subs_and_translations((remove_html_tags(sub.content), translated_content))
