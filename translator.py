@@ -70,79 +70,8 @@ SUBTITLE_CONTEXT_COUNT = 15
 # This should be smaller than SUBTITLE_CONTEXT_COUNT
 TRANSLATION_BATCH_LENGTH = 4
 
-# Whether to send the translated file to a specified LLM again to try to fix bad translations
-# Note: This currently doesn't work very well, so I recommend to leave it disabled.
-REEVALUATION_ENABLED = False
-
-# Model to use for translation reevaluation
-# Use a model with a large context length, e.g. llama3.1 or llama3.2
-# You need a model with a large context length so that the whole subtitle file will fit in it.
-MODEL_REEVALUATE = "llama3.1"
-
-# The context length used for reevaluation. Doesn't usually have to be more than around half the max context size of your model.
-CONTEXT_LENGTH_REEVALUATE = 42500
-
-# Temperature setting for translation reevaluation
-TEMPERATURE_REEVALUATE = 0
-
-# System prompt used to reevaluate an already translated SRT file.
-SYSTEM_PROMPT_REEVALUATE = f"""
-Du sollst die deutsche Übersetzung einer bereits übersetzten SRT Untertiteldatei verbessern.
-
-Der Aufbau der SRT Datei ist folgendermaßen:
-id
-timestamp-from --> timestamp-to
-ENGLISCHER Untertitel.
-{TRANSLATION_PREFIX}bereits übersetzter, DEUTSCHER Untertitel.{TRANSLATION_SUFFIX}
-
-Bitte verbessere die jeweilige DEUTSCHE Übersetzung eines Untertitels nur dann, wenn eine der folgenden Bedingungen zutrifft:
-- Der gesamte Kontext aller Untertitel in der Datei wurde nicht gut einbezogen.
-- Die Übersetzungen sind unvollständig, grammatikalisch inkorrekt, schwer verständlich oder fehlerhaft.
-- Wenn nicht klar ist, ob "Du" oder "Sie" verwendet werden soll, MUSS das formellere "Sie" verwendet werden.
-- Anreden, Namen und Titel, wie "Henry", "George", "Mr.", "Mrs.", "Sir", "Detective", "Constable", "Inspector" wurden ins Deutsche übersetzt. Diese Anreden, Namen und Titel müssen UNBEDINGT ENGLISCH bleiben.
-
-Beispiele für RICHTIGE Übersetzungen:
-- Sir -> Sir
-- Henry -> Henry
-- How are you, Detective? -> Wie geht es Ihnen, Detective?
-Beispiele für FALSCHE Übersetzungen:
-- Sir -> Herr
-- Henry -> Heinrich
-- How are you, Detective? -> Wie geht es dir, Detektiv?
-
-Wichtig: Denk daran, dass falls der "<br>" HTML-Code im Englischen verwendet wurde, diesen in der verbesserten deutschen Übersetzung beizubehalten.
-
-Du sprichst direkt mit einem Python-Programm. Daher darfst du NUR in JSON antworten.
-Formatiere deine Antwort NICHT. Verwende KEIN MARKDOWN (keine '`' Zeichen) sondern außschließlich die folgende JSON-Struktur:
-{{
-  // false bedeutet, dass keine Übersetzungen verbessert werden mussten; true bedeutet, dass mindestens eine Übersetzung verbessert wurde
-  "status": true,
-  "updatedTranslations": [
-    {{
-      // die id der verbesserten Übersetzung der SRT Datei.
-      "id": ...,
-      // NUR die verbesserte DEUTSCHE Übersetzung, ohne die HTML-Tags, nur "<br>"-Tags sind erlaubt.
-      "t": "..."
-    }},
-    {{
-      // die id der verbesserten Übersetzung der SRT Datei.
-      "id": ...,
-      // NUR die verbesserte DEUTSCHE Übersetzung, ohne die HTML-Tags, nur "<br>"-Tags sind erlaubt.
-      "t": "..."
-    }}
-  ]
-}}
-
-Wenn keine Änderungen vorgenommen wurden, gib bitte trotzdem eine Antwort im obigen Format, wobei "status" auf false gesetzt werden muss und "updatedTranslations" leer bleibt.
-"""
-
-# Prompt to give the LLM the SRT file.
-# The %file% placeholder will be replaced with the content of the translated SRT file.
-PROMPT_REEVALUATE = "Dies ist die zu untersuchende SRT Datei:\n%file%"
-
 # Print debug output to console?
 DEBUG = True
-#DEBUG = True
 
 # END OF CONFIG CONSTANTS
 # ----------------------------------------------------------------------
@@ -155,27 +84,6 @@ prev_subs_and_translations: list[tuple[str, str]]
 
 # Holds the next up to SUBTITLE_CONTEXT_COUNT translations in the future of the current subtitle
 future_subs: list[str]
-
-class ReevaluationResponse():
-  def __init__(self, status: bool, updatedTranslations):
-    # false: nothing was corrected
-    # true: at least one translation was corrected
-    self.status: bool = status
-
-    # list of corrected translations
-    self.updatedTranslations: list['ReevaluationResponse.Translation'] = [
-      ReevaluationResponse.Translation(id=tr['id'], t=tr['t']) 
-      for tr in updatedTranslations
-    ]
-
-  class Translation:
-    def __init__(self, id: int, t: str):
-      # the SRT subtitle id of the corrected translation
-      self.id: int = id
-
-      # the new, corrected translation
-      self.t: str = t
-
 
 
 def remove_html_tags(text: str) -> str:
@@ -455,85 +363,6 @@ def translateSRTFile(subs: list[srt.Subtitle], filepath: str) -> list[srt.Subtit
 
   return subs
 
-def reevaluateTranslatedSRTFile(subs: list[srt.Subtitle]) -> list[srt.Subtitle]:
-  """
-  Reevaluate the translated subtitles to improve translation accuracy
-  and correctness, especially focusing on contextual understanding and grammatical
-  correctness.
-
-  Args:
-    subs (list[srt.Subtitle]): A list of subtitles to be reevaluated.
-
-  Returns:
-    list[srt.Subtitle]: A list of subtitles with possibly corrected translations.
-  """
-  try:
-    corrected_subs = copy.deepcopy(subs)
-
-    # convert line breaks to HTML line breaks so the model understands them better.
-    for sub in corrected_subs:
-      sub.content = sub.content.replace("\n", "<br>")
-
-    subs_text = srt.compose(corrected_subs, reindex=False)
-    resp_json = None
-
-    for j in range(1, 4):
-      try:
-        # request reevaluation from the LLM
-        stream = ollama_client.generate(
-          model=MODEL_REEVALUATE,
-          prompt=PROMPT_REEVALUATE.replace("%file%", subs_text),
-          system=SYSTEM_PROMPT_REEVALUATE,
-          stream=True,
-          options=ollama.Options(
-                                  temperature=TEMPERATURE_REEVALUATE,
-                                  num_ctx=CONTEXT_LENGTH_REEVALUATE,
-                                  num_predict=-1,
-                                )
-        )
-        
-        # print current LLM output for reevaluation
-        resp_text = ""
-        for chunk in stream:
-          resp_text += chunk['response']
-          if DEBUG:
-            print(chunk['response'], end='', flush=True)
-        if DEBUG:
-          print()
-        
-        # try to convert the response to json
-        resp_text = resp_text.replace("```json", "").replace("```", "")
-        resp_json: ReevaluationResponse = ReevaluationResponse(**json.loads(resp_text))
-        break
-      except Exception as e:
-        print(f"Error: An unexpected error occurred while reevaluating (attempt {j}/3):\n{"".join(traceback.format_exception(e))}\n")
-        continue
-
-    if (resp_json and resp_json.status == True):
-      # Iterate through each translation update
-      for translation in resp_json.updatedTranslations:
-        # Check if the index matches the translation id
-        if corrected_subs[translation.id - 1].index == translation.id:
-          # Update the content by replacing the translation
-          corrected_subs[translation.id - 1].content = re.sub(
-            f"{re.escape(TRANSLATION_PREFIX)}.*?{re.escape(TRANSLATION_SUFFIX)}",
-            f"{TRANSLATION_PREFIX}{translation.t}{TRANSLATION_SUFFIX}",
-            corrected_subs[translation.id - 1].content,
-            flags=re.DOTALL
-          )
-        else:
-          print("Error: subtitle index mismatch, aborting reevaluation.")
-          return subs
-
-    # convert HTML line breaks back to normal ones
-    for sub in corrected_subs:
-      sub.content = sub.content.replace("<br>", "\n")
-
-    return corrected_subs
-  except Exception as e:
-    print(f"Error: An unexpected error occurred while reevaluating: {e}")
-    return subs
-
 def main():
   """
   Main function to perform translation on subtitle files.
@@ -583,11 +412,6 @@ def main():
       subs = translateSRTFile(copy.deepcopy(subs), filepath)
     else:
       print("File is already translated, skipping formatting and translation...")
-    
-    # we can be sure now that the file is translated.
-    if REEVALUATION_ENABLED:
-      print("Reevaluation is enabled, trying to correct bad translations (this may take a while)...")
-      subs = reevaluateTranslatedSRTFile(copy.deepcopy(subs))
     
     # overwrite original subtitle file with current subtitles
     with open(filepath, 'w') as new_file:
