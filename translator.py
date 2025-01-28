@@ -126,7 +126,7 @@ def ends_with_punctuation(text: str) -> bool:
   """
   # ignore HTML tags
   text = remove_html_tags(text)
-  return text.endswith((".", "!", "?", "\"", "'", "♪"))
+  return text.endswith((".", "!", "?", "\"", "'", "♪", "]"))
 
 def starts_with_hyphen(text: str) -> bool:
     """
@@ -242,7 +242,7 @@ def translate_batch(subs_batch:list[srt.Subtitle], startIndex) -> list[str]:
     print(prompt)
     print("-------------- END PROMPT --------------")
 
-  # retry 5 times
+  # retry 10 times
   for j in range(10):
     try:
       # request translation from the server
