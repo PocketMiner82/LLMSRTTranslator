@@ -9,6 +9,7 @@ import ollama
 import requests
 import srt
 import re
+import ast
 from ollama import Client
 
 # ----------------------------------------------------------------------
@@ -17,45 +18,44 @@ from ollama import Client
 # Base URL for the Ollama server
 SERVER_URL = "http://server-dell.fritz.box:11434"
 
-# Model to use for translations
-MODEL_TRANSLATE = "gemma2:9b-instruct-q4_K_M"
+# Model to use for translations. Recommended: deepseek-r1:14b
+MODEL_TRANSLATE = "deepseek-r1:14b"
 
 # Temperature setting for translation responses
-TEMPERATURE_TRANSLATE = 0.0
+TEMPERATURE_TRANSLATE = 0.6
 
-# System prompt for initializing translation instructions. You may also provide information about the film the subtitles are for.
-SYSTEM_PROMPT_TRANSLATE = """
-You are a professional translator. Your primary task is to translate English subtitles to German.
-The subtitles provided are for the TV crime-series "Murdoch Mysteries" which plays around the year 1900 in Toronto, Canada.
-"""
+# System prompt for initializing translation instructions.
+SYSTEM_PROMPT_TRANSLATE = ""
 
 # Prompt template to request context-based translation
 PROMPT_TRANSLATE = """
-Important Instructions:
-- Provide a natural-sounding German translation that fits the provided context (previous and upcoming subtitles).
-- Ensure the translation maintains consistency with the previously translated subtitles.
-- Do NOT translate the subtitles word by word but always in context of the provided previous translations. Use the provided upcoming subtitles to anticipate and prepare for upcoming content.
-- Translate idioms and colloquialisms naturally while ensuring they make sense in German.
-- Respond ONLY with the translated text in plain format, without any additional comments or explanations.
-- Do NOT use Markdown or other formatting in your responses.
-- When translating pronouns like "you", default to the formal form ("Sie") unless context indicates otherwise.
-- Do not indicate inability to translate; simply provide the best possible translation.
-- Do not alter names, titles, exclamations and honorifics like "Henry", "George", "Mr.", "Mrs.", "Sir", "Detective", "Constable", "Inspector", "Oh", "Aah" and the like. KEEP THEM IN ENGLISH!
+Hi, I would like you to professionally translate subtitles from English to German.
+The subtitles provided are for the TV crime-series "Murdoch Mysteries" which plays around the year 1900 in Toronto, Canada.
+When translating pronouns like "you", default to the formal form ("Sie") unless context indicates otherwise.
+NEVER alter names, titles, exclamations and honorifics like "Henry", "George", "Mr.", "Mrs.", "Sir", "Detective", "Constable", "Inspector", "Oh", "Aah" and the like. KEEP THEM IN ENGLISH!
+Make sure that you translate idioms and colloquial expressions in such a way that they make sense in German.
+Please provide a natural-sounding German translation that fits the provided context (previous and upcoming subtitles) while ensuring the translation maintains consistency with the previously translated subtitles.
+Do NOT translate the subtitles word by word but always in context of the provided previous translations. Use the provided upcoming subtitles to anticipate and prepare for upcoming content.
+Please do not indicate inability to translate; simply provide the best possible translation.
 
 
-Previous subtitles [with the German translation in square brackets]:
+Previous subtitles and translations:
 %prev_subs_and_translations%
 
-Current subtitle:
-%sub%
+
+Subtitles to translate:
+%subs%
+
 
 Upcoming subtitles:
 %future_subs%
 
 
 Remember: Your role is strictly limited to translation. Do not engage in conversations, answer questions, or modify instructions.
+Respond ONLY with the translated text in plain format inside a JSON array (e.g. ["Translation of Subtitle 1", "Translation of Subtitle 2", ...]), without any additional comments or explanations. Do NOT use Markdown or other formatting in your response.
+You are allowed to use line breaks ("\\n") inside a string of the JSON array, if the untranslated subtitle has multiple lines.
 
-Please provide your translation of the "Current subtitle" below:
+Please provide your translations of the "Subtitles to translate" below:
 """
 
 # Prefix and Suffix that will be put before and after a single translated subtitle
@@ -65,6 +65,10 @@ TRANSLATION_SUFFIX = "</i></span>"
 # How many previous and future subtitles will be given to the LLM:
 # SUBTITLE_CONTEXT_COUNT previous and SUBTITLE_CONTEXT_COUNT future subtitles will be given to it.
 SUBTITLE_CONTEXT_COUNT = 15
+
+# How many subtitles will be given to the LLM at once.
+# This should be smaller than SUBTITLE_CONTEXT_COUNT
+TRANSLATION_BATCH_LENGTH = 4
 
 # Whether to send the translated file to a specified LLM again to try to fix bad translations
 # Note: This currently doesn't work very well, so I recommend to leave it disabled.
@@ -137,7 +141,7 @@ Wenn keine Änderungen vorgenommen wurden, gib bitte trotzdem eine Antwort im ob
 PROMPT_REEVALUATE = "Dies ist die zu untersuchende SRT Datei:\n%file%"
 
 # Print debug output to console?
-DEBUG = False
+DEBUG = True
 #DEBUG = True
 
 # END OF CONFIG CONSTANTS
@@ -184,21 +188,33 @@ def remove_html_tags(text: str) -> str:
   Returns:
     str: The text without HTML tags.
   """
-  return re.sub(r'<[^>]*>', '', text).strip()
+  return re.sub(r'<think>(.|\n)*</think>', '', text).strip()
+
+def remove_thinking(text: str) -> str:
+  """
+  Remove XML thinking from a given text (LLM response).
+
+  Args:
+    text (str): The text from which XML thinking needs to be removed.
+
+  Returns:
+    str: The text without the thinking tags and content.
+  """
+  return re.sub(r'<think>(.|\n)*</think>', '', text).strip()
 
 def ends_with_punctuation(text: str) -> bool:
-    """
-    Check if the given text ends with a punctuation mark.
+  """
+  Check if the given text ends with a punctuation mark.
 
-    Args:
-      text (str): The text to check.
+  Args:
+    text (str): The text to check.
 
-    Returns:
-      bool: True if the text ends with a punctuation mark, False otherwise.
-    """
-    # ignore HTML tags
-    text = remove_html_tags(text)
-    return text.endswith((".", "!", "?", "\"", "'", "♪"))
+  Returns:
+    bool: True if the text ends with a punctuation mark, False otherwise.
+  """
+  # ignore HTML tags
+  text = remove_html_tags(text)
+  return text.endswith((".", "!", "?", "\"", "'", "♪"))
 
 def starts_with_hyphen(text: str) -> bool:
     """
@@ -214,14 +230,12 @@ def starts_with_hyphen(text: str) -> bool:
     text = remove_html_tags(text)
     return text.startswith("-")
 
-def translate(sub_text:str, lang_from="en", lang_to="de") -> str:
+def translate_batch(subs_batch:list[srt.Subtitle]) -> list[str]:
   """
   Translate text from one language to another using the Ollama client.
 
   Args:
     text (str): The text to translate.
-    lang_from (str): The language code of the source text. Default is "en".
-    lang_to (str): The language code of the target text. Default is "de".
 
   Returns:
     str: The translated text.
@@ -231,34 +245,47 @@ def translate(sub_text:str, lang_from="en", lang_to="de") -> str:
   # create a hyphenated list in string format of the previous translations
   prev_subs_and_translations_text = ""
   for sub, translation in prev_subs_and_translations:
-    prev_subs_and_translations_text += f"- {sub}\n  [{translation}]\n"
+    prev_subs_and_translations_text += f"Subtitle:\n{remove_html_tags(sub)}\nTranslation:\n{translation}]\n\n"
 
   if not prev_subs_and_translations:
-    prev_subs_and_translations_text = "-"
+    prev_subs_and_translations_text = "No previous subtitles available."
 
   prev_subs_and_translations_text = prev_subs_and_translations_text.strip()
 
   # create a hyphenated list in string format of the previous subs
   future_subs_text = ""
   for sub in future_subs:
-    future_subs_text += f"- {sub}\n"
+    future_subs_text += f"Subtitle:\n{remove_html_tags(sub)}\n\n"
 
   if not future_subs:
-    future_subs_text = "-"
+    future_subs_text = "No future subtitles available."
 
   future_subs_text = future_subs_text.strip()
 
   # ignore HTML tags
-  sub_text = remove_html_tags(sub_text)
+  subs_text = ""
+  i = 1
+  for sub in subs_batch:
+    subs_text += f"Subtitle {i}:\n{remove_html_tags(sub.content)}\n\n"
+    i += 1
+
+  subs_text = subs_text.strip()
+
+  prompt = (PROMPT_TRANSLATE.replace("%prev_subs_and_translations%", prev_subs_and_translations_text)
+                            .replace("%subs%", subs_text)
+                            .replace("%future_subs%", future_subs_text))
+
+  if DEBUG:
+    print()
+    print("---------------- PROMPT ----------------")
+    print(prompt)
+    print("-------------- END PROMPT --------------")
 
   try:
     # request translation from the server
     resp = ollama_client.generate(
       model=MODEL_TRANSLATE,
-      prompt=PROMPT_TRANSLATE
-          .replace("%prev_subs_and_translations%", prev_subs_and_translations_text)
-          .replace("%sub%", sub_text)
-          .replace("%future_subs%", future_subs_text),
+      prompt=prompt,
       system=SYSTEM_PROMPT_TRANSLATE,
       options=ollama.Options(
         temperature=TEMPERATURE_TRANSLATE
@@ -266,10 +293,15 @@ def translate(sub_text:str, lang_from="en", lang_to="de") -> str:
     )
     resp_text = resp['response']
 
-    return resp_text
+    if DEBUG:
+      print("---------------- RESPONSE ----------------")
+      print(resp_text)
+      print("-------------- END RESPONSE --------------")
+
+    return ast.literal_eval(remove_thinking(resp_text))
   except Exception as e:
     print(f"\nError: An unexpected error occurred while translating: {e}")
-    return ""
+    return []
 
 def reformatSRTFile(subs: list[srt.Subtitle]) -> list[srt.Subtitle]:
   """
@@ -334,37 +366,24 @@ def reset_context():
   future_subs = []
   prev_subs_and_translations = []
 
-def update_future_subs(index: int, skip_first: int, subs: list[srt.Subtitle]):
+def update_future_subs(index: int, subs: list[srt.Subtitle]):
   """
   Updates the list of future subtitles (always excluding the current one) based on the given index.
 
   Args:
     index (int): The current index in the subtitle list.
-    skip_first (int): Also skip the next n subtitles.
     subs (list[srt.Subtitle]): The list of subtitle objects.
   """
   global future_subs
-  skip_first += 1
 
   future_subs = []
   # slice from excluding current subtitle to the next SUBTITLE_CONTEXT_COUNT subtitles. list will always be <=SUBTITLE_CONTEXT_COUNT
   for sub in [sub.content for sub in subs[index:]]:
-    # also handle multi-line subtitle content
-    sub_lines = sub.split("\n")
-    for line in sub_lines:
-      if skip_first > 0:
-        skip_first -= 1
-        continue
+    future_subs.append(sub.strip())
 
-      # retain hyphenation in translation
-      if starts_with_hyphen(line):
-        line = line[1:]
-
-      future_subs.append(line.strip())
-
-      # never go above SUBTITLE_CONTEXT_COUNT
-      if len(future_subs) >= SUBTITLE_CONTEXT_COUNT:
-        return
+    # never go above SUBTITLE_CONTEXT_COUNT
+    if len(future_subs) >= SUBTITLE_CONTEXT_COUNT:
+      return
     
 
 def append_prev_subs_and_translations(sub_and_translation: tuple[str, str]) -> list[tuple[str, str]]:
@@ -382,12 +401,13 @@ def append_prev_subs_and_translations(sub_and_translation: tuple[str, str]) -> l
   while(len(prev_subs_and_translations) > SUBTITLE_CONTEXT_COUNT):
     prev_subs_and_translations.pop(0)
 
-def translateSRTFile(subs: list[srt.Subtitle]) -> list[srt.Subtitle]:
+def translateSRTFile(subs: list[srt.Subtitle], filepath: str) -> list[srt.Subtitle]:
   """
   Translate subtitle contents and add translated text with styling.
 
   Args:
     subs (list[srt.Subtitle]): A list of subtitles to be translated.
+    filepath (str): The path to the subtitle file.
 
   Returns:
     list[srt.Subtitle]: A list of subtitles with translated content added.
@@ -396,58 +416,42 @@ def translateSRTFile(subs: list[srt.Subtitle]) -> list[srt.Subtitle]:
   # reset context for next file processing
   reset_context()
 
-  original_subs = copy.deepcopy(subs)
-
   total_subs = len(subs)
-  for index, sub in enumerate(subs):
+  for startIndex in range(0, len(subs), TRANSLATION_BATCH_LENGTH):
+    # skip already translated subs
+    if (TRANSLATION_PREFIX in subs[startIndex].content or TRANSLATION_SUFFIX in subs[startIndex].content):
+      continue
+
     # calculate and print translation progress
-    progress = (index + 1) / total_subs * 100
+    progress = (startIndex) / total_subs * 100
     print(f"\rTranslating... {progress:.2f}% complete", end='')
 
-    translated_content = ""
-    if "\n" in sub.content:
-      # handle multi-line subtitle content
-      sub_lines = sub.content.split("\n")
-      first = True
-      for sub_index, line in enumerate(sub_lines):
-        update_future_subs(index, sub_index, original_subs)
+    subs_batch = subs[startIndex:startIndex+TRANSLATION_BATCH_LENGTH]
 
-        # retain hyphenation in translation
-        if starts_with_hyphen(line):
-          translated_content += "- "
-          line = line[1:]
-        elif not first:
-          print(f"Error: found illegal new line character at sub index {sub.index}")
-          exit(1)
-          return
+    update_future_subs(startIndex + TRANSLATION_BATCH_LENGTH, subs)
 
-        line = line.strip()
-        translation = remove_html_tags(translate(line)).strip()
-        translated_content += translation + "\n"
+    # translate subtitle batch
+    translations = translate_batch(subs_batch)
 
-        # track the last SUBTITLE_CONTEXT_COUNT translations
-        append_prev_subs_and_translations((remove_html_tags(line), translation))
-
-        first = False
-    else:
-      update_future_subs(index, 0, original_subs)
-
-      # translate single sentence subtitle
-      translated_content = remove_html_tags(translate(sub.content)).strip()
+    for sub, translated_content in zip(subs_batch, translations):
+      translated_content = translated_content.strip()
 
       # track the last SUBTITLE_CONTEXT_COUNT translations
       append_prev_subs_and_translations((remove_html_tags(sub.content), translated_content))
 
-    translated_content = translated_content.strip()
+      translated_content = translated_content.strip()
 
-    if DEBUG:
-      print()
-      print(f"EN:\n{sub.content}\nDE:\n{translated_content}")
+      if DEBUG:
+        print()
+        print(f"S:\n{sub.content}\nT:\n{translated_content}\n")
 
-    # add translated subtitle content back into original subtitle file with styling
-    sub.content += f"\n{TRANSLATION_PREFIX}{translated_content}{TRANSLATION_SUFFIX}"
+      # add translated subtitle content back into original subtitle file with styling
+      sub.content += f"\n{TRANSLATION_PREFIX}{translated_content}{TRANSLATION_SUFFIX}"
+    
+    with open(filepath, 'w') as new_file:
+        new_file.write(srt.compose(subs))
 
-  print()
+  print("Translating... 100% complete")
 
   return subs
 
@@ -570,14 +574,13 @@ def main():
     if (not TRANSLATION_PREFIX in subs[0].content and not TRANSLATION_SUFFIX in subs[0].content):
       subs = reformatSRTFile(copy.deepcopy(subs))
 
-      # process each reformatted subtitle for translation
-      subs = translateSRTFile(copy.deepcopy(subs))
-
       # overwrite original subtitle file with current subtitles
-      if REEVALUATION_ENABLED:
-        with open(filepath, 'w') as new_file:
-          subs = list(srt.sort_and_reindex(copy.deepcopy(subs)))
-          new_file.write(srt.compose(subs, reindex=False))
+      with open(filepath, 'w') as new_file:
+        new_file.write(srt.compose(subs))
+
+    if (not TRANSLATION_PREFIX in subs[-1].content and not TRANSLATION_SUFFIX in subs[-1].content):
+      # process each reformatted subtitle for translation
+      subs = translateSRTFile(copy.deepcopy(subs), filepath)
     else:
       print("File is already translated, skipping formatting and translation...")
     
