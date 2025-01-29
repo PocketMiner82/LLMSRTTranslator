@@ -299,7 +299,7 @@ def translate_batch(subs_batch:list[srt.Subtitle]):
   # create a list in string format of numbered previous subs and translations
   prev_subs_and_translations_text = ""
   for sub, translation in prev_subs_and_translations:
-    prev_subs_and_translations_text += f"- '{remove_html_tags(sub).replace("\n", "\\n")}'\n  Translation: '{translation.replace("\n", "\\n")}'\n"
+    prev_subs_and_translations_text += f"- '{remove_html_tags(sub).replace("\n", "\\n").replace("\"", "\\\"")}'\n  Translation: '{translation.replace("\n", "\\n").replace("\"", "\\\"")}'\n"
 
   if not prev_subs_and_translations:
     prev_subs_and_translations_text = "No previous subtitles available."
@@ -311,7 +311,7 @@ def translate_batch(subs_batch:list[srt.Subtitle]):
   id = 1
   subs_text = ""
   for sub in subs_batch:
-    subs_text += f"- Sutitle {id}: '{remove_html_tags(sub.content).replace("\n", "\\n")}'\n"
+    subs_text += f"- Sutitle {id}: '{remove_html_tags(sub.content).replace("\n", "\\n").replace("\"", "\\\"")}'\n"
     id += 1
 
   subs_text = subs_text.strip()
@@ -319,7 +319,7 @@ def translate_batch(subs_batch:list[srt.Subtitle]):
   # create a list in string format of numbered upcoming subs
   future_subs_text = ""
   for sub in future_subs:
-    future_subs_text += f"- '{remove_html_tags(sub).replace("\n", "\\n")}'\n"
+    future_subs_text += f"- '{remove_html_tags(sub).replace("\n", "\\n").replace("\"", "\\\"")}'\n"
 
   if not future_subs:
     future_subs_text = "No future subtitles available."
@@ -391,13 +391,13 @@ def translateSRTFile(subs: list[srt.Subtitle], filepath: str) -> list[srt.Subtit
     for sub, translated_content in zip(subs_batch, translations):
       if isinstance(translated_content, (list, tuple)):
         translated_content = "\n".join(translated_content)
-      translated_content = translated_content.strip().replace("\\n", "\n")
+      translated_content = translated_content.strip().replace("\\n", "\n").replace("\\\"", "\"")
 
       translated_content = translated_content.strip()
 
       # add translated subtitle content back into original subtitle file with styling
       sub.content += f"\n{TRANSLATION_PREFIX}{translated_content}{TRANSLATION_SUFFIX}"
-    
+
     with open(filepath, 'w') as new_file:
         new_file.write(srt.compose(subs))
 
