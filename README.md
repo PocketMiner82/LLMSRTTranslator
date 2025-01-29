@@ -9,7 +9,7 @@ Translate (multiple) SRT files with an LLM to any language you like.
 
 # Simple usage
 - put your SRT(s) in the `subs` directory. The files must end in `.srt`
-- open `translator.py` and edit the config constants `SERVER_URL`, `MODEL`, `TEMPERATURE` and `SYSTEM_PROMPT` according to your setup
+- open `translator.py` and edit the config constants according to your setup
 - run the translator using `python translator.py`
 
 # Advanced usage ([opensubtitles.org](https://www.opensubtitles.org/))
