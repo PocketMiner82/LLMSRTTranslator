@@ -82,7 +82,7 @@ SUBTITLE_CONTEXT_COUNT = 10
 TRANSLATION_BATCH_LENGTH = 10
 
 # Print debug output to console?
-DEBUG = False
+DEBUG = True
 
 # END OF CONFIG CONSTANTS
 # ----------------------------------------------------------------------
@@ -209,7 +209,32 @@ def update_previous_subs_and_translations(index: int, subs: list[srt.Subtitle]):
     if len(prev_subs_and_translations) >= SUBTITLE_CONTEXT_COUNT:
       break
 
-def prompt_model(prompt, required_response_length, model, temp):
+def is_valid_list(obj) -> bool:
+  """
+  Check if an object is a list of strings or a list of lists of strings.
+
+  Args:
+    obj: The object to be checked. Can be any type.
+
+  Returns:
+    bool: True if the object is a valid list of strings or nested lists of strings, False otherwise.
+"""
+  if not isinstance(obj, (list, tuple)):
+    return False
+  
+  for item in obj:
+    if not isinstance(item, (str, list, tuple)):
+      return False
+    
+    if isinstance(item, (list, tuple)):
+      for sub_item in item:
+        if not isinstance(sub_item, str):
+          return False
+  
+  return True
+
+
+def prompt_model(prompt:str, required_response_length:int, model:str, temp:float):
   """
   Request a translation from the server using the Ollama client, ensuring
   that the response matches the required length.
@@ -217,8 +242,8 @@ def prompt_model(prompt, required_response_length, model, temp):
   Args:
     prompt (str): The prompt or query to be sent to the server for translation.
     required_response_length (int): The expected number of translations to be returned.
-    model: The model to be used for generating translations.
-    temp: The temperature setting for the generation process.
+    model (str): The model to be used for generating translations.
+    temp (float): The temperature setting for the generation process.
 
   Raises:
     Exception: If the number of translations in the response does not match the required length.
@@ -249,14 +274,17 @@ def prompt_model(prompt, required_response_length, model, temp):
   if DEBUG:
     print("\n-------------- END RESPONSE --------------")
 
-  resp_list: list[str] = ast.literal_eval(remove_thinking(resp_text))
+  resp_list = ast.literal_eval(remove_thinking(resp_text))
 
   if len(resp_list) != required_response_length:
     raise Exception(f"LLM did not return correct amount of translations. Required: {required_response_length}. Got: {len(resp_list)}.")
 
+  if not is_valid_list(resp_list):
+    raise Exception("LLM did not return a valid list.")
+
   return resp_list
 
-def translate_batch(subs_batch:list[srt.Subtitle]) -> list[str]:
+def translate_batch(subs_batch:list[srt.Subtitle]):
   """
   Translate text from one language to another using the Ollama client.
 
@@ -313,7 +341,7 @@ def translate_batch(subs_batch:list[srt.Subtitle]) -> list[str]:
     try:
       return prompt_model(prompt, len(subs_batch), MODEL_TRANSLATE, TEMPERATURE_TRANSLATE)
     except Exception as e:
-      print(f"\nError: An error occurred while translating with model '{MODEL_TRANSLATE}': {e}\nRetry {j + 1}/5...")
+      print(f"\nError: An error occurred while translating with model '{MODEL_TRANSLATE}' (Attempt {j + 1}/5): {e}")
 
   print("Retrying with fallback model...")
 
@@ -322,7 +350,7 @@ def translate_batch(subs_batch:list[srt.Subtitle]) -> list[str]:
     try:
       return prompt_model(prompt, len(subs_batch), MODEL_TRANSLATE_FALLBACK, TEMPERATURE_TRANSLATE_FALLBACK)
     except Exception as e:
-      print(f"\nError: An error occurred while translating with fallback model '{MODEL_TRANSLATE_FALLBACK}': {e}\nRetry {j + 1}/5...")
+      print(f"\nError: An error occurred while translating with fallback model '{MODEL_TRANSLATE_FALLBACK}' (Attempt {j + 1}/5): {e}")
 
   raise Exception("Max retry amount reached.")
 
@@ -361,6 +389,8 @@ def translateSRTFile(subs: list[srt.Subtitle], filepath: str) -> list[srt.Subtit
     translations = translate_batch(subs_batch)
 
     for sub, translated_content in zip(subs_batch, translations):
+      if isinstance(translated_content, (list, tuple)):
+        translated_content = "\n".join(translated_content)
       translated_content = translated_content.strip().replace("\\n", "\n")
 
       translated_content = translated_content.strip()
