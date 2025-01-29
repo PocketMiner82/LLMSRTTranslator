@@ -341,18 +341,21 @@ def translate_batch(subs_batch:list[srt.Subtitle]):
     try:
       return prompt_model(prompt, len(subs_batch), MODEL_TRANSLATE, TEMPERATURE_TRANSLATE)
     except Exception as e:
-      print(f"\nError: An error occurred while translating with model '{MODEL_TRANSLATE}' (Attempt {j + 1}/5): {e}")
+      if DEBUG:
+        print(f"\nError: An error occurred while translating with model '{MODEL_TRANSLATE}' (Attempt {j + 1}/5): {e}")
 
-  print("Retrying with fallback model...")
+  if DEBUG:
+    print("Retrying with fallback model...")
 
   # retry fallback model 5 times
   for j in range(5):
     try:
       return prompt_model(prompt, len(subs_batch), MODEL_TRANSLATE_FALLBACK, TEMPERATURE_TRANSLATE_FALLBACK)
     except Exception as e:
-      print(f"\nError: An error occurred while translating with fallback model '{MODEL_TRANSLATE_FALLBACK}' (Attempt {j + 1}/5): {e}")
+      if DEBUG:
+        print(f"\nError: An error occurred while translating with fallback model '{MODEL_TRANSLATE_FALLBACK}' (Attempt {j + 1}/5): {e}")
 
-  raise Exception("Max retry amount reached.")
+  raise Exception("An error happend while translating and the maximum retry amount was reached.")
 
 def translateSRTFile(subs: list[srt.Subtitle], filepath: str) -> list[srt.Subtitle]:
   """
