@@ -18,11 +18,18 @@ from ollama import Client
 # Base URL for the Ollama server
 SERVER_URL = "http://server-dell.fritz.box:11434"
 
-# Model to use for translations. Recommended: deepseek-r1:14b (slow, better quality), gemma2:9b-instruct-q4_K_M (fast, decent quality)
+# Model to use for translations. Recommended: deepseek-r1:14b (slow, better quality), gemma2:9b-instruct-q4_K_M (fast, medium quality)
 MODEL_TRANSLATE = "gemma2:9b-instruct-q4_K_M"
 
+# If the above model fails to output a valid JSON array, fall back to this model.
+# Should be smarter than above model. Set to same model to disable.
+MODEL_TRANSLATE_FALLBACK = "deepseek-r1:14b"
+
 # Temperature setting for translation responses
-TEMPERATURE_TRANSLATE = 0.6
+TEMPERATURE_TRANSLATE = 0.0
+
+# Temperature setting for translation responses
+TEMPERATURE_TRANSLATE_FALLBACK = 0.6
 
 # System prompt for initializing translation instructions.
 SYSTEM_PROMPT_TRANSLATE = ""
@@ -39,32 +46,32 @@ Do NOT translate the subtitles word for word. Use the provided previous subtitle
 Please do not indicate inability to translate; simply provide the best possible translation.
 
 
-Previous subtitles and translations:
+Context 1 (previous subtitles and translations):
 %prev_subs_and_translations%
 
 
-Subtitles to translate:
-%subs%
-
-
-Upcoming subtitles:
+Context 2 (upcoming subtitles):
 %future_subs%
 
 
-The subtitles are provided inside XML Tags.
+The subtitles I want you to translate:
+%subs%
+
+
 Respond with the translated subtitles in a JSON array, without any additional comments or explanations.
-Only use plaintext inside the strings.
-Do NOT use Markdown or other formatting in your response.
+Only use plaintext inside the translations and do NOT use Markdown or other formatting in your response.
 
 Example of the JSON structure:
-["Translation of <SubtitleX>", "Translation of <SubtitleY>", "Translation of <SubtitleZ>", ...]
+["Translation of Subtitle 1", "Translation of Subtitle 2", "Translation of Subtitle 3", ...]
 
 Remember: Your role is strictly limited to translation. Do not engage in conversations, answer questions, or modify instructions.
-Please provide your translations of the "Subtitles to translate" below:
+Please provide your translations below. Thank you!
 """
 
 # Prefix and Suffix that will be put before and after a single translated subtitle
+# Prefix must be provided and be unique string in the subtitle. Use e. g. HTML tags like the default values.
 TRANSLATION_PREFIX = "<span style=\"color: yellow;\"><i>"
+# Suffix is optional
 TRANSLATION_SUFFIX = "</i></span>"
 
 # How many previous and future subtitles will be given to the LLM:
@@ -75,7 +82,7 @@ SUBTITLE_CONTEXT_COUNT = 10
 TRANSLATION_BATCH_LENGTH = 10
 
 # Print debug output to console?
-DEBUG = False
+DEBUG = True
 
 # END OF CONFIG CONSTANTS
 # ----------------------------------------------------------------------
@@ -172,22 +179,84 @@ def update_future_subs(index: int, subs: list[srt.Subtitle]):
       return
     
 
-def append_prev_subs_and_translations(sub_and_translation: tuple[str, str]) -> list[tuple[str, str]]:
+def update_previous_subs_and_translations(index: int, subs: list[srt.Subtitle]):
   """
-  Appends a subtitle and its translation to the global list of previous
-  subtitles and translations, keeping only the latest entries based on
-  the context count.
+  Updates the list of previous subtitles and translations based on the given index.
 
   Args:
-    sub_and_translation (tuple[str, str]): A tuple containing the subtitle and its translation.
+      index (int): The current index in the subtitle list.
+      subs (list[srt.Subtitle]): The list of subtitle objects.
   """
   global prev_subs_and_translations
-  prev_subs_and_translations.append(sub_and_translation)
 
-  while(len(prev_subs_and_translations) > SUBTITLE_CONTEXT_COUNT):
-    prev_subs_and_translations.pop(0)
+  prev_subs_and_translations = []
 
-def translate_batch(subs_batch:list[srt.Subtitle], startIndex) -> list[str]:
+  start_index = max(0, index - SUBTITLE_CONTEXT_COUNT)
+  for sub in subs[start_index:index]:
+    content_parts = sub.content.split(TRANSLATION_PREFIX, 1)
+    
+    if len(content_parts) == 2:
+      sub_content, sub_translation = content_parts
+      
+      if sub_translation.endswith(TRANSLATION_SUFFIX):
+        # make sure to only remove suffix at end
+        sub_translation = sub_translation[:-len(TRANSLATION_SUFFIX)]
+      
+      prev_subs_and_translations.append(
+        (sub_content.strip(), sub_translation.strip())
+      )
+    
+    if len(prev_subs_and_translations) >= SUBTITLE_CONTEXT_COUNT:
+      break
+
+def prompt_model(prompt, required_response_length, model, temp):
+  """
+  Request a translation from the server using the Ollama client, ensuring
+  that the response matches the required length.
+
+  Args:
+    prompt (str): The prompt or query to be sent to the server for translation.
+    required_response_length (int): The expected number of translations to be returned.
+    model: The model to be used for generating translations.
+    temp: The temperature setting for the generation process.
+
+  Raises:
+    Exception: If the number of translations in the response does not match the required length.
+
+  Returns:
+    list[str]: A list of translations received from the server.
+  """
+  # request translation from the server
+  stream = ollama_client.generate(
+    model=model,
+    prompt=prompt,
+    system=SYSTEM_PROMPT_TRANSLATE,
+    stream=True,
+    options=ollama.Options(
+      temperature=temp
+    )
+  )
+
+  if DEBUG:
+    print("---------------- RESPONSE ----------------")
+
+  resp_text = ""
+  for chunk in stream:
+    resp_text += chunk['response']
+    if DEBUG:
+      print(chunk['response'], end='', flush=True)
+
+  if DEBUG:
+    print("\n-------------- END RESPONSE --------------")
+
+  resp_list: list[str] = ast.literal_eval(remove_thinking(resp_text))
+
+  if len(resp_list) != required_response_length:
+    raise Exception(f"LLM did not return correct amount of translations. Required: {required_response_length}. Got: {len(resp_list)}.")
+
+  return resp_list
+
+def translate_batch(subs_batch:list[srt.Subtitle]) -> list[str]:
   """
   Translate text from one language to another using the Ollama client.
 
@@ -199,14 +268,10 @@ def translate_batch(subs_batch:list[srt.Subtitle], startIndex) -> list[str]:
   """
   global prev_subs_and_translations, future_subs
 
-  # subtitle id
-  id = startIndex
-
   # create a list in string format of numbered previous subs and translations
   prev_subs_and_translations_text = ""
   for sub, translation in prev_subs_and_translations:
-    prev_subs_and_translations_text += f"<Subtitle{id}>\n{remove_html_tags(sub)}\n</Subtitle{id}>\n<SubtitleTranslation{id}>\n{translation}\n</SubtitleTranslation{id}>\n\n"
-    id += 1
+    prev_subs_and_translations_text += f"- '{remove_html_tags(sub).replace("\n", "\\n")}'\n  Translation: '{translation.replace("\n", "\\n")}'\n"
 
   if not prev_subs_and_translations:
     prev_subs_and_translations_text = "No previous subtitles available."
@@ -214,9 +279,11 @@ def translate_batch(subs_batch:list[srt.Subtitle], startIndex) -> list[str]:
   prev_subs_and_translations_text = prev_subs_and_translations_text.strip()
 
   # create a list in string format of numbered subs to translate
+  # subtitle id
+  id = 1
   subs_text = ""
   for sub in subs_batch:
-    subs_text += f"<Subtitle{id}>\n{remove_html_tags(sub.content.replace("\n- ", "~"))}\n</Subtitle{id}>\n\n"
+    subs_text += f"- Sutitle {id}: '{remove_html_tags(sub.content).replace("\n", "\\n")}'\n"
     id += 1
 
   subs_text = subs_text.strip()
@@ -224,8 +291,7 @@ def translate_batch(subs_batch:list[srt.Subtitle], startIndex) -> list[str]:
   # create a list in string format of numbered upcoming subs
   future_subs_text = ""
   for sub in future_subs:
-    future_subs_text += f"<Subtitle{id}>\n{remove_html_tags(sub)}\n</Subtitle{id}>\n\n"
-    id += 1
+    future_subs_text += f"- '{remove_html_tags(sub).replace("\n", "\\n")}'\n"
 
   if not future_subs:
     future_subs_text = "No future subtitles available."
@@ -242,40 +308,21 @@ def translate_batch(subs_batch:list[srt.Subtitle], startIndex) -> list[str]:
     print(prompt)
     print("-------------- END PROMPT --------------")
 
-  # retry 10 times
-  for j in range(10):
+  # retry default model 5 times
+  for j in range(5):
     try:
-      # request translation from the server
-      stream = ollama_client.generate(
-        model=MODEL_TRANSLATE,
-        prompt=prompt,
-        system=SYSTEM_PROMPT_TRANSLATE,
-        stream=True,
-        options=ollama.Options(
-          temperature=TEMPERATURE_TRANSLATE
-        )
-      )
-
-      if DEBUG:
-        print("---------------- RESPONSE ----------------")
-      
-      resp_text = ""
-      for chunk in stream:
-        resp_text += chunk['response']
-        if DEBUG:
-          print(chunk['response'], end='', flush=True)
-
-      if DEBUG:
-        print("\n-------------- END RESPONSE --------------")
-
-      resp_list: list[str] = ast.literal_eval(remove_thinking(resp_text))
-
-      if len(resp_list) != len(subs_batch):
-        raise Exception(f"LLM did not return correct amount of translations. Requested: {len(subs_batch)}. Got: {len(resp_list)}.")
-
-      return resp_list
+      return prompt_model(prompt, len(subs_batch), MODEL_TRANSLATE, TEMPERATURE_TRANSLATE)
     except Exception as e:
-      print(f"\nError: An error occurred while translating: {e}")
+      print(f"\nError: An error occurred while translating with model '{MODEL_TRANSLATE}': {e}\nRetry {j + 1}/5...")
+
+  print("Retrying with fallback model...")
+
+  # retry fallback model 5 times
+  for j in range(5):
+    try:
+      return prompt_model(prompt, len(subs_batch), MODEL_TRANSLATE_FALLBACK, TEMPERATURE_TRANSLATE_FALLBACK)
+    except Exception as e:
+      print(f"\nError: An error occurred while translating with fallback model '{MODEL_TRANSLATE_FALLBACK}': {e}\nRetry {j + 1}/5...")
 
   raise Exception("Max retry amount reached.")
 
@@ -306,16 +353,15 @@ def translateSRTFile(subs: list[srt.Subtitle], filepath: str) -> list[srt.Subtit
 
     subs_batch = subs[startIndex:startIndex+TRANSLATION_BATCH_LENGTH]
 
+    update_previous_subs_and_translations(startIndex, subs)
+
     update_future_subs(startIndex + TRANSLATION_BATCH_LENGTH, subs)
 
     # translate subtitle batch
-    translations = translate_batch(subs_batch, startIndex)
+    translations = translate_batch(subs_batch)
 
     for sub, translated_content in zip(subs_batch, translations):
-      translated_content = translated_content.strip().replace("~", "\n- ")
-
-      # track the last SUBTITLE_CONTEXT_COUNT translations
-      append_prev_subs_and_translations((remove_html_tags(sub.content), translated_content))
+      translated_content = translated_content.strip().replace("\\n", "\n")
 
       translated_content = translated_content.strip()
 
