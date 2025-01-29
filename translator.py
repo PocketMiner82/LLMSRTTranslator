@@ -82,7 +82,7 @@ SUBTITLE_CONTEXT_COUNT = 10
 TRANSLATION_BATCH_LENGTH = 10
 
 # Print debug output to console?
-DEBUG = True
+DEBUG = False
 
 # END OF CONFIG CONSTANTS
 # ----------------------------------------------------------------------
