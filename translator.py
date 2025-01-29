@@ -401,7 +401,7 @@ def translateSRTFile(subs: list[srt.Subtitle], filepath: str) -> list[srt.Subtit
     with open(filepath, 'w') as new_file:
         new_file.write(srt.compose(subs))
 
-  print("Translating... 100.00% complete")
+  print("\rTranslating... 100.00% complete")
 
   return subs
 
