@@ -82,7 +82,7 @@ SUBTITLE_CONTEXT_COUNT = 10
 TRANSLATION_BATCH_LENGTH = 10
 
 # Print debug output to console?
-DEBUG = False
+DEBUG = True
 
 # END OF CONFIG CONSTANTS
 # ----------------------------------------------------------------------
@@ -107,7 +107,7 @@ def remove_html_tags(text: str) -> str:
   Returns:
     str: The text without HTML tags.
   """
-  return re.sub(r'<think>(.|\n)*</think>', '', text).strip()
+  return re.sub(r'<[^>]*>', '', text).strip()
 
 def remove_thinking(text: str) -> str:
   """
@@ -311,7 +311,7 @@ def translate_batch(subs_batch:list[srt.Subtitle]):
   id = 1
   subs_text = ""
   for sub in subs_batch:
-    subs_text += f"- Sutitle {id}: '{remove_html_tags(sub.content).replace("\n", "\\n").replace("\"", "\\\"")}'\n"
+    subs_text += f"- Subtitle {id}: '{remove_html_tags(sub.content).replace("\n", "\\n").replace("\"", "\\\"")}'\n"
     id += 1
 
   subs_text = subs_text.strip()
