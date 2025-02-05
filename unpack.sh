@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# then download subs, e.g.: https://www.opensubtitles.org/en/download/s/sublanguageid-eng/uploader-mrtinkles/pimdbid-1091909/season-X
+# then download subs, e.g.: https://www.opensubtitles.org/en/download/s/sublanguageid-eng/uploader-mrtinkles/hearingimpaired-on/pimdbid-1091909/season-X
 # put the zip in the subs folder and run this script
 
 cd "$(dirname "$0")" || exit 1
@@ -12,7 +12,7 @@ cd subs || exit 1
 unzip *.zip || exit 1
 mv */* . || exit 1
 find . -type d -delete || exit 1
-rm *.HI.*.srt || exit 1
+#rm *.HI.*.srt || exit 1
 
 # Loop through all .srt files in the current directory
 for file in *.srt; do
