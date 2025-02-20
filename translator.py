@@ -82,7 +82,7 @@ SUBTITLE_CONTEXT_COUNT = 10
 TRANSLATION_BATCH_LENGTH = 10
 
 # Print debug output to console?
-DEBUG = True
+DEBUG = False
 
 # END OF CONFIG CONSTANTS
 # ----------------------------------------------------------------------
@@ -129,11 +129,9 @@ def ends_with_punctuation(text: str) -> bool:
     text (str): The text to check.
 
   Returns:
-    bool: True if the text ends with a punctuation mark, False otherwise.
+    bool: True if the text ends with a punctuation mark or HTML tag, False otherwise.
   """
-  # ignore HTML tags
-  text = remove_html_tags(text)
-  return text.endswith((".", "!", "?", "\"", "'", "♪", "]"))
+  return text.endswith((".", "!", "?", "\"", "'", "♪", "]", ">"))
 
 def starts_with_hyphen(text: str) -> bool:
     """
@@ -437,10 +435,10 @@ def reformatSRTFile(subs: list[srt.Subtitle]) -> list[srt.Subtitle]:
       line = line.strip()
 
       # condition for concatenating hyphenated lines and removing new lines otherwise
-      if (starts_with_hyphen(line) and prev_line.strip() and not ends_with_punctuation(prev_line)):
+      if (starts_with_hyphen(line) and prev_line and not ends_with_punctuation(prev_line)):
         line = line[1:].strip()
         line_builder += " "
-      elif (starts_with_hyphen(line)):
+      elif (starts_with_hyphen(line) or prev_line.endswith(">") or line.startswith("<")):
         line_builder += "\n"
       else:
         line_builder += " "
