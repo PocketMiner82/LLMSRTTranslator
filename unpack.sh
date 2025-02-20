@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# then download subs, e.g.: https://www.opensubtitles.org/en/download/s/sublanguageid-eng/uploader-mrtinkles/hearingimpaired-on/pimdbid-1091909/season-X
+# then download subs, e.g.: https://www.opensubtitles.org/en/download/s/sublanguageid-eng/uploader-srjanapala/hearingimpaired-on/pimdbid-1091909/season-X
 # put the zip in the subs folder and run this script
 
 cd "$(dirname "$0")" || exit 1
