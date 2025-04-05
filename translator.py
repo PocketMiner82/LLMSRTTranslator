@@ -131,7 +131,7 @@ def ends_with_punctuation(text: str) -> bool:
   Returns:
     bool: True if the text ends with a punctuation mark or HTML tag, False otherwise.
   """
-  return text.endswith((".", "!", "?", "\"", "'", "♪", "]", ">"))
+  return text.endswith((".", "!", "?", "\"", "'", "♪", "]", ">", ")"))
 
 def starts_with_hyphen(text: str) -> bool:
     """
