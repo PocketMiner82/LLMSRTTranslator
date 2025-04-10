@@ -58,11 +58,12 @@ The subtitles I want you to translate:
 %subs%
 
 
-Respond with the translated subtitles in a JSON array, without any additional comments or explanations.
+Respond with the translated subtitles in a JSON array with exactly %sub_count% elements, so it reflects the number of subtitles provided.
+Please do not add any additional comments or explanations.
 Only use plaintext inside the translations and do NOT use Markdown or other formatting in your response.
 
 Example of the JSON structure:
-["Translation of Subtitle 1", "Translation of Subtitle 2", "Translation of Subtitle 3", ...]
+["Translation of Subtitle 1", "Translation of Subtitle 2", "Translation of Subtitle 3", ..., "Translation of Subtitle %sub_count%"]
 
 Remember: Your role is strictly limited to translation. Do not engage in conversations, answer questions, or modify instructions.
 Please provide your translations below. Thank you!
@@ -326,7 +327,8 @@ def translate_batch(subs_batch:list[srt.Subtitle]):
 
   prompt = (PROMPT_TRANSLATE.replace("%prev_subs_and_translations%", prev_subs_and_translations_text)
                             .replace("%subs%", subs_text)
-                            .replace("%future_subs%", future_subs_text))
+                            .replace("%future_subs%", future_subs_text)
+                            .replace("%sub_count%", str(len(subs_batch))))
 
   if DEBUG:
     print()
